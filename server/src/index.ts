@@ -5,7 +5,7 @@ import { createConnection, TextDocuments, TextDocumentSyncKind, ResponseError, L
 import { TextDocument } from 'vscode-languageserver-textdocument'
 import { watch, type FSWatcher } from 'chokidar'
 import { languageServiceCapabilities, type EditorDocument, type EditorHover, type EditorLocation } from '@cross-css/native'
-import { canonicalUri, excluded, type Aliases } from './project.js'
+import { canonicalUri, isExcludedPath, type Aliases } from './project.js'
 
 const [major, minor] = process.versions.node.split('.').map(Number)
 if (!(major === 20 && minor >= 19 || major === 22 && minor >= 12 || major > 22)) {
@@ -58,7 +58,7 @@ connection.onInitialize((params: InitializeParams) => {
   const roots = (params.workspaceFolders?.map(folder => folder.uri) ?? (params.rootUri ? [params.rootUri] : [])).filter(uri => uri.startsWith('file:')).map(uri => fileURLToPath(canonicalUri(uri)))
   ready = call('initialize', roots, options.aliases ?? {}, options.excludedRoots ?? [])
   watcher = watch(roots, { ignoreInitial: true, followSymlinks: false, ignored: (path, stats) =>
-    path.split(/[\\/]/).some(part => excluded.has(part)) || (options.excludedRoots ?? []).some(root => path === root || path.startsWith(root + '/') || path.startsWith(root + '\\')) || Boolean(stats?.isFile() && !path.endsWith('.xcss') && !path.endsWith('.json')),
+    isExcludedPath(path, roots, options.excludedRoots) || Boolean(stats?.isFile() && !path.endsWith('.xcss') && !path.endsWith('.json')),
   })
   watcher.on('all', (event, path) => {
     if (!['add', 'change', 'unlink'].includes(event)) return

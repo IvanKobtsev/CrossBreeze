@@ -6,6 +6,13 @@ import { parse, type ParseError } from 'jsonc-parser'
 import { LanguageService, inspect } from '@cross-css/native'
 
 export const excluded = new Set(['.git', '.idea', 'node_modules', 'dist', 'target', 'build', 'coverage'])
+export function isExcludedPath(path: string, roots: string[], excludedRoots: string[] = []): boolean {
+  const root = roots.find(root => { const rel = relative(root, path); return rel === '' || !rel.startsWith('..') && !isAbsolute(rel) })
+  const scoped = root ? relative(root, path) : path
+  return scoped.split(/[\\/]/).some(part => excluded.has(part)) || excludedRoots.some(root => {
+    const rel = relative(root, path); return rel === '' || !rel.startsWith('..') && !isAbsolute(rel)
+  })
+}
 export function canonicalUri(value: string): string {
   if (!value.startsWith('file:')) return value
   let path = resolve(fileURLToPath(value))
@@ -98,9 +105,7 @@ export class Project {
     uri = canonicalUri(uri)
     if (!uri.startsWith('file:')) return
     const path = fileURLToPath(uri)
-    const excludedPath = path.split(/[\\/]/).some(part => excluded.has(part)) || this.excludedRoots.some(root => {
-      const rel = relative(root, path); return rel === '' || !rel.startsWith('..') && !isAbsolute(rel)
-    })
+    const excludedPath = isExcludedPath(path, this.roots, this.excludedRoots)
     if (excludedPath && !this.files.has(uri) && !this.requestedPaths.has(path)) return
     if (/^(tsconfig|jsconfig).*\.json$/.test(path.split(/[\\/]/).at(-1) ?? '') || this.configurations.has(path)) {
       this.configurations.clear()
@@ -121,6 +126,7 @@ export class Project {
     }))
   }
   private config(path: string, seen = new Set<string>()): Paths {
+    path = fileURLToPath(canonicalUri(pathToFileURL(path).href))
     const cached = this.configurations.get(path)
     if (cached) return cached
     if (seen.has(path)) { this.onWarning(`Cyclic configuration inheritance: ${path}`); return { base: dirname(path), paths: {} } }
