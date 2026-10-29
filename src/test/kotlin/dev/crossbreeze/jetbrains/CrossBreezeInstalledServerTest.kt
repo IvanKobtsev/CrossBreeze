@@ -19,7 +19,9 @@ class CrossBreezeInstalledServerTest : BasePlatformTestCase() {
         NodeJsInterpreterManager.getInstance(project).setInterpreterRef(
             NodeJsInterpreterRef.create(NodeJsLocalInterpreter(node)), testRootDisposable,
         )
-        val descriptor = CrossBreezeDescriptor(project)
+        val provider = com.intellij.openapi.extensions.ExtensionPointName.create<com.intellij.platform.lsp.api.LspIntegrationProvider>("com.intellij.platform.lsp.integrationProvider")
+            .extensionList.filterIsInstance<CrossBreezeLspIntegrationProvider>().single()
+        val descriptor = provider.descriptorFor(project)
         val process = descriptor.createCommandLine().createProcess()
         val input = process.inputStream
         fun send(value: String) {
