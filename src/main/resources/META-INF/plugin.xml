@@ -1,0 +1,30 @@
+<idea-plugin>
+  <id>dev.crossbreeze.jetbrains</id>
+  <name>CrossBreeze</name>
+  <vendor url="https://github.com/IvanKobtsev/CrossBreeze">Ivan Kobtsev</vendor>
+  <description><![CDATA[
+    <p>XCSS language support for WebStorm: diagnostics, definition navigation,
+    references, hover, and semantic highlighting. Includes lexical highlighting
+    while the language server starts. Uses the project's configured local Node.js runtime.</p>
+  ]]></description>
+  <depends>com.intellij.modules.platform</depends>
+  <depends>com.intellij.modules.ultimate</depends>
+  <depends>com.intellij.modules.lsp</depends>
+  <depends>JavaScript</depends>
+  <depends>NodeJS</depends>
+  <extensions defaultExtensionNs="com.intellij">
+    <fileType name="XCSS" language="XCSS" extensions="xcss" implementationClass="dev.crossbreeze.jetbrains.XcssFileType" fieldName="INSTANCE"/>
+    <lang.parserDefinition language="XCSS" implementationClass="dev.crossbreeze.jetbrains.XcssParserDefinition"/>
+    <lang.syntaxHighlighterFactory language="XCSS" implementationClass="dev.crossbreeze.jetbrains.XcssSyntaxHighlighterFactory"/>
+    <colorSettingsPage implementation="dev.crossbreeze.jetbrains.XcssColorSettingsPage"/>
+    <platform.lsp.integrationProvider implementation="dev.crossbreeze.jetbrains.CrossBreezeLspIntegrationProvider"/>
+    <projectConfigurable id="dev.crossbreeze.settings" displayName="CrossBreeze" instance="dev.crossbreeze.jetbrains.CrossBreezeConfigurable"/>
+    <notificationGroup id="CrossBreeze" displayType="BALLOON"/>
+    <statusBarWidgetFactory id="CrossBreeze" implementation="dev.crossbreeze.jetbrains.CrossBreezeStatusWidgetFactory"/>
+  </extensions>
+  <actions>
+    <action id="CrossBreeze.Restart" class="dev.crossbreeze.jetbrains.CrossBreezeRestartAction" text="Restart CrossBreeze Language Server">
+      <add-to-group group-id="ToolsMenu" anchor="last"/>
+    </action>
+  </actions>
+</idea-plugin>
