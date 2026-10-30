@@ -6,6 +6,8 @@ import { TextDocument } from 'vscode-languageserver-textdocument'
 import { watch, type FSWatcher } from 'chokidar'
 import { languageServiceCapabilities, type EditorDocument, type EditorHover, type EditorLocation } from '@cross-css/native'
 import { canonicalUri, isExcludedPath, type Aliases } from './project.js'
+import { defaultCssValidation, type CssValidationOptions } from './css-validation.js'
+import type { Diagnostic } from 'vscode-languageserver'
 
 const [major, minor] = process.versions.node.split('.').map(Number)
 if (!(major === 20 && minor >= 19 || major === 22 && minor >= 12 || major > 22)) {
@@ -33,7 +35,8 @@ worker.on('exit', code => { if (!shutdown) { for (const item of pending.values()
 let ready: Promise<unknown> = Promise.resolve()
 let watcher: FSWatcher | undefined
 let timer: ReturnType<typeof setTimeout> | undefined
-let options: { aliases?: Aliases; excludedRoots?: string[] } = {}
+let options: { aliases?: Aliases; excludedRoots?: string[] } & Partial<CssValidationOptions> = {}
+let cssOptions = { ...defaultCssValidation }
 const open = new Map<string, { uri: string; version: number }>()
 const failed = (error: unknown) => connection.console.error(String(error))
 function scheduleDiagnostics() {
@@ -45,16 +48,24 @@ async function publish() {
   const generation = epoch
   for (const [uri, document] of open) {
     const result = await call<EditorDocument>('document', uri)
+    const cssDiagnostics = await call<Diagnostic[]>('cssDiagnostics', uri, cssOptions).catch(error => {
+      failed(error)
+      return []
+    })
     if (generation !== epoch || open.get(uri)?.version !== document.version) return
-    connection.sendDiagnostics({ uri: document.uri, version: document.version, diagnostics: result.diagnostics.map(d => ({
+    connection.sendDiagnostics({ uri: document.uri, version: document.version, diagnostics: [...result.diagnostics.map((d): Diagnostic => ({
       range: d.location.range, code: d.code, source: 'XCSS', message: d.message,
       severity: d.severity === 'error' ? 1 : d.severity === 'warning' ? 2 : 3,
       relatedInformation: d.related.map(location => ({ location, message: 'Related declaration' })),
-    })) })
+    })), ...cssDiagnostics] })
   }
 }
 connection.onInitialize((params: InitializeParams) => {
   options = params.initializationOptions ?? {}
+  cssOptions = {
+    checkCssProperties: options.checkCssProperties !== false,
+    checkCssValues: options.checkCssValues !== false,
+  }
   const roots = (params.workspaceFolders?.map(folder => folder.uri) ?? (params.rootUri ? [params.rootUri] : [])).filter(uri => uri.startsWith('file:')).map(uri => fileURLToPath(canonicalUri(uri)))
   ready = call('initialize', roots, options.aliases ?? {}, options.excludedRoots ?? [])
   watcher = watch(roots, { ignoreInitial: true, followSymlinks: false, ignored: (path, stats) =>
@@ -93,6 +104,10 @@ documents.onDidClose(({ document }) => {
   scheduleDiagnostics()
 })
 connection.onDidChangeConfiguration(({ settings }) => {
+  cssOptions = {
+    checkCssProperties: settings?.crossbreeze?.checkCssProperties ?? cssOptions.checkCssProperties,
+    checkCssValues: settings?.crossbreeze?.checkCssValues ?? cssOptions.checkCssValues,
+  }
   epoch++
   ready = ready.then(() => call('configure', settings?.crossbreeze?.aliases ?? {}))
   ready.catch(failed)

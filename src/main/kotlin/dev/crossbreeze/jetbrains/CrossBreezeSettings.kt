@@ -21,7 +21,7 @@ import javax.swing.JTextArea
 @Service(Service.Level.PROJECT)
 @State(name = "CrossBreeze", storages = [Storage("crossbreeze.xml")])
 class CrossBreezeSettings : PersistentStateComponent<CrossBreezeSettings.Data> {
-    data class Data(var enabled: Boolean = true, var aliases: String = "{}")
+    data class Data(var enabled: Boolean = true, var aliases: String = "{}", var checkCssProperties: Boolean = true, var checkCssValues: Boolean = true)
     private var data = Data()
     override fun getState() = data
     override fun loadState(state: Data) { data = state }
@@ -43,11 +43,17 @@ class CrossBreezeSettings : PersistentStateComponent<CrossBreezeSettings.Data> {
 }
 class CrossBreezeConfigurable(private val project: Project) : Configurable {
     private val enabled = JCheckBox("Enable CrossBreeze")
+    private val checkCssProperties = JCheckBox("Check CSS property names")
+    private val checkCssValues = JCheckBox("Check CSS values and types")
     private val aliases = JTextArea(10, 50)
     override fun getDisplayName() = "CrossBreeze"
     override fun createComponent() = JPanel(BorderLayout(0, 8)).apply {
         add(JPanel(BorderLayout()).apply {
-            add(enabled, BorderLayout.NORTH)
+            add(JPanel(java.awt.GridLayout(0, 1)).apply {
+                add(enabled)
+                add(checkCssProperties)
+                add(checkCssValues)
+            }, BorderLayout.NORTH)
             add(JLabel("Alias overrides (JSON object of path arrays, relative to the content root):"), BorderLayout.SOUTH)
         }, BorderLayout.NORTH)
         add(JScrollPane(aliases), BorderLayout.CENTER)
@@ -55,17 +61,19 @@ class CrossBreezeConfigurable(private val project: Project) : Configurable {
     }
     override fun isModified(): Boolean {
         val state = project.service<CrossBreezeSettings>().state
-        return enabled.isSelected != state.enabled || aliases.text != state.aliases
+        return enabled.isSelected != state.enabled || aliases.text != state.aliases ||
+            checkCssProperties.isSelected != state.checkCssProperties || checkCssValues.isSelected != state.checkCssValues
     }
     override fun reset() {
         val state = project.service<CrossBreezeSettings>().state
         enabled.isSelected = state.enabled; aliases.text = state.aliases
+        checkCssProperties.isSelected = state.checkCssProperties; checkCssValues.isSelected = state.checkCssValues
     }
     override fun apply() {
         try { CrossBreezeSettings.parseAliases(aliases.text) }
         catch (error: Exception) { throw ConfigurationException(error.message ?: "Invalid aliases") }
         val settings = project.service<CrossBreezeSettings>()
-        settings.loadState(CrossBreezeSettings.Data(enabled.isSelected, aliases.text))
+        settings.loadState(CrossBreezeSettings.Data(enabled.isSelected, aliases.text, checkCssProperties.isSelected, checkCssValues.isSelected))
         project.service<CrossBreezeRuntime>().reset()
         LspClientManager.getInstance(project).stopAndRestartClientsIfNeeded(CrossBreezeLspIntegrationProvider::class.java)
     }

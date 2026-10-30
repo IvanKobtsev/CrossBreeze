@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import assert from 'node:assert/strict'
 
-const version = '0.3.0'
+const version = JSON.parse(await readFile('package.json', 'utf8')).dependencies['@cross-css/native']
 const lock = JSON.parse(await readFile('package-lock.json', 'utf8'))
 const destination = resolve('dist/server')
 await mkdir(destination, { recursive: true })

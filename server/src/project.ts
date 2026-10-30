@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 import { parse, type ParseError } from 'jsonc-parser'
 import { LanguageService, inspect } from '@cross-css/native'
+import { validateCss, type CssValidationOptions } from './css-validation.js'
 
 export const excluded = new Set(['.git', '.idea', 'node_modules', 'dist', 'target', 'build', 'coverage'])
 export function isExcludedPath(path: string, roots: string[], excludedRoots: string[] = []): boolean {
@@ -116,6 +117,12 @@ export class Project {
   watchPaths() {
     return [...this.files.keys()].filter(uri => uri.startsWith('file:')).map(uri => fileURLToPath(uri))
       .concat([...this.configurations.keys()], [...this.requestedPaths])
+  }
+  cssDiagnostics(uri: string, options: CssValidationOptions) {
+    if (!options.checkCssProperties && !options.checkCssValues) return []
+    uri = canonicalUri(uri)
+    const service = this.isolated.get(uri) ?? this.service
+    return validateCss(service.cssDeclarations(uri), options, this.onWarning)
   }
   private validAliases(value: unknown): Aliases {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return {}

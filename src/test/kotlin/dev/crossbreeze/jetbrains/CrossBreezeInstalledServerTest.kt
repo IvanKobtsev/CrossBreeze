@@ -14,7 +14,21 @@ import kotlin.test.assertTrue
 
 /** Exercises the plugin-installed server and configured interpreter, not source-tree paths. */
 class CrossBreezeInstalledServerTest : BasePlatformTestCase() {
-    fun testBundledServerStartsAndReturnsSemanticTokens() {
+    fun testCssValidationSettingsArePassedToServer() {
+        val settings = project.getService(CrossBreezeSettings::class.java)
+        assertTrue(settings.state.checkCssProperties)
+        assertTrue(settings.state.checkCssValues)
+        settings.loadState(CrossBreezeSettings.Data(checkCssProperties = false, checkCssValues = true))
+        val descriptor = CrossBreezeDescriptor(project, java.nio.file.Path.of("."))
+        val options = descriptor.createInitializationOptions() as Map<*, *>
+        assertEquals(false, options["checkCssProperties"])
+        assertEquals(true, options["checkCssValues"])
+        settings.loadState(CrossBreezeSettings.Data(checkCssProperties = true, checkCssValues = false))
+        val updated = descriptor.createInitializationOptions() as Map<*, *>
+        assertEquals(true, updated["checkCssProperties"])
+        assertEquals(false, updated["checkCssValues"])
+    }
+    fun testBundledServerReturnsSemanticTokensAndCssDiagnostics() {
         val node = System.getenv("CROSSBREEZE_TEST_NODE") ?: "node"
         NodeJsInterpreterManager.getInstance(project).setInterpreterRef(
             NodeJsInterpreterRef.create(NodeJsLocalInterpreter(node)), testRootDisposable,
@@ -24,23 +38,28 @@ class CrossBreezeInstalledServerTest : BasePlatformTestCase() {
         val descriptor = provider.descriptorFor(project)
         val process = descriptor.createCommandLine().createProcess()
         val input = process.inputStream
+        val notifications = mutableListOf<JsonObject>()
         fun send(value: String) {
             val bytes = value.toByteArray(Charsets.UTF_8)
             process.outputStream.write("Content-Length: ${bytes.size}\r\n\r\n".toByteArray(Charsets.US_ASCII))
             process.outputStream.write(bytes)
             process.outputStream.flush()
         }
+        fun receive(): JsonObject {
+            val header = ByteArrayOutputStream()
+            while (!header.toString(Charsets.US_ASCII).endsWith("\r\n\r\n")) {
+                val byte = input.read()
+                check(byte >= 0) { "Bundled server exited: ${process.errorStream.readAllBytes().toString(Charsets.UTF_8)}" }
+                header.write(byte)
+            }
+            val size = Regex("Content-Length: (\\d+)", RegexOption.IGNORE_CASE).find(header.toString(Charsets.US_ASCII))!!.groupValues[1].toInt()
+            return JsonParser.parseString(input.readNBytes(size).toString(Charsets.UTF_8)).asJsonObject
+        }
         fun response(id: Int): JsonObject = CompletableFuture.supplyAsync {
             while (true) {
-                val header = ByteArrayOutputStream()
-                while (!header.toString(Charsets.US_ASCII).endsWith("\r\n\r\n")) {
-                    val byte = input.read()
-                    check(byte >= 0) { "Bundled server exited: ${process.errorStream.readAllBytes().toString(Charsets.UTF_8)}" }
-                    header.write(byte)
-                }
-                val size = Regex("Content-Length: (\\d+)", RegexOption.IGNORE_CASE).find(header.toString(Charsets.US_ASCII))!!.groupValues[1].toInt()
-                val message = JsonParser.parseString(input.readNBytes(size).toString(Charsets.UTF_8)).asJsonObject
+                val message = receive()
                 if (message.get("id")?.asInt == id) return@supplyAsync message
+                notifications.add(message)
             }
             @Suppress("UNREACHABLE_CODE") error("No response")
         }.get(20, TimeUnit.SECONDS)
@@ -49,9 +68,21 @@ class CrossBreezeInstalledServerTest : BasePlatformTestCase() {
             val initialized = response(1)
             assertTrue(initialized.getAsJsonObject("result").getAsJsonObject("capabilities").getAsJsonObject("semanticTokensProvider").get("full").asBoolean)
             send("""{"jsonrpc":"2.0","method":"initialized","params":{}}""")
-            send("""{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"untitled:smoke.xcss","languageId":"xcss","version":1,"text":"@vars { --size: length = 1px; } .button { width: --size; }"}}}""")
+            send("""{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"untitled:smoke.xcss","languageId":"xcss","version":1,"text":"@vars { --size: length = 1px; --duration: time = 1s; } .button { width: --size; dispay: flex; display: fex; height: --duration; }"}}}""")
             send("""{"jsonrpc":"2.0","id":2,"method":"textDocument/semanticTokens/full","params":{"textDocument":{"uri":"untitled:smoke.xcss"}}}""")
             assertTrue(response(2).getAsJsonObject("result").getAsJsonArray("data").size() > 0)
+            val published = CompletableFuture.supplyAsync {
+                notifications.firstOrNull { it.get("method")?.asString == "textDocument/publishDiagnostics" }?.let { return@supplyAsync it }
+                while (true) {
+                    val message = receive()
+                    if (message.get("method")?.asString == "textDocument/publishDiagnostics") return@supplyAsync message
+                }
+                @Suppress("UNREACHABLE_CODE") error("No diagnostics")
+            }.get(20, TimeUnit.SECONDS)
+            val css = published.getAsJsonObject("params").getAsJsonArray("diagnostics")
+                .map { it.asJsonObject }.filter { it.get("source")?.asString == "CSS" }
+            assertEquals(setOf("css.unknown-property", "css.invalid-value", "css.type-mismatch"), css.map { it.get("code").asString }.toSet())
+            assertTrue(css.all { it.get("severity").asInt == 2 })
             assertEquals(XcssColors.FUNCTION, descriptor.lspCustomization.semanticTokensCustomizer.let {
                 (it as com.intellij.platform.lsp.api.customization.LspSemanticTokensSupport).getTextAttributesKey("function", emptyList())
             })

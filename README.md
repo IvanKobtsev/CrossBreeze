@@ -40,9 +40,34 @@ state; click it or choose **Tools → Restart CrossBreeze Language Server** to r
 Semantic colors can be customized under **Editor → Color Scheme → XCSS**. Lexical
 highlighting remains available when Node or the server is unavailable.
 
-Navigation currently covers XCSS files. Completion, rename, lint rules, fixes,
+Navigation currently covers XCSS files. Completion, rename, style lint rules, fixes,
 JS/TS `styles.button` navigation, remote Node runtimes, and CSS generation in the
 editor are outside this first release.
+
+## CSS validation
+
+CrossBreeze checks ordinary CSS declaration names and values as you type, including
+inside nested rules, keyframes, and injection definitions. For example, `dispay:
+flex` reports an unknown property, `display: fex` reports an invalid value, and a
+`time` variable used for `width` reports a type mismatch. These are warnings and
+appear alongside native XCSS diagnostics.
+
+**Check CSS property names** and **Check CSS values and types** can be switched
+independently in the project's CrossBreeze settings. Both are enabled by default.
+Changing them restarts the language server.
+
+Validation uses CSSTree and the XCSS parser/resolver without compiling CSS. Typed
+references use internal representative values (for example, `1s` for `time` and
+`1` for `number`); warnings always point to the original source. This checks broad
+compatibility, without refining types for signs, ranges, or integer-only positions.
+A passing representative does not guarantee that every value of that type is valid.
+Literal CSS values receive normal grammar validation.
+
+Unknown or unresolved references, native `var()` values, incomplete syntax, and
+unsupported XCSS transformations skip value checks while still allowing property
+name checks. Custom properties accept unrestricted values. XCSS directives and
+at-rule descriptors are excluded. At-rule validation, completion, and quick fixes
+are not included. Newly introduced CSS may require a CSSTree data update.
 
 ## Development
 
@@ -62,7 +87,7 @@ sandbox. Open a multi-file XCSS project, check diagnostics, Ctrl/Cmd-click an
 injection or variable, find references, inspect hover, and edit an unsaved document
 to verify live highlighting and diagnostics. Configure Node inside the sandbox.
 
-CrossBreeze pins **@cross-css/native 0.3.0 from npm**, including package-lock
+CrossBreeze pins **@cross-css/native 0.3.2 from npm**, including package-lock
 integrity. Packaging fetches all eight locked native tarballs, verifies SHA-512
 integrity, includes licenses, and records per-file hashes. There are no sibling
 XCSS checkout, Git dependency, local tarball, or development-binary fallbacks.

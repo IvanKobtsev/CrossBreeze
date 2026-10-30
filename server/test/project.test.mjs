@@ -13,6 +13,20 @@ function fixture() {
 }
 const pos = (source, name) => ({ line: 0, character: source.indexOf(name) })
 
+test('CSS validation is queried separately and isolated documents use their own service', () => {
+  const { root, put } = fixture()
+  const app = put('app.xcss', '.a { display: fex; }')
+  const project = new Project([root])
+  project.initialize()
+  assert.equal(project.cssDiagnostics(app, { checkCssProperties: true, checkCssValues: true })[0].code, 'css.invalid-value')
+  project.update('untitled:isolated', '.a { dispay: flex; }', 1)
+  assert.equal(project.cssDiagnostics('untitled:isolated', { checkCssProperties: true, checkCssValues: true })[0].code, 'css.unknown-property')
+  project.service.cssDeclarations = () => { throw new Error('must not run for navigation or semantic tokens') }
+  assert(project.query('document', app).tokens.length)
+  assert.deepEqual(project.query('definition', app, { line: 0, character: 0 }), [])
+  assert.deepEqual(project.cssDiagnostics(app, { checkCssProperties: false, checkCssValues: false }), [])
+})
+
 test('aliases, inheritance, overlay precedence, revisions, close and deletion', () => {
   const { root, put } = fixture()
   put('config/base.json', '{ "compilerOptions": { "baseUrl": "..", "paths": { "@theme/*": ["styles/*"] } } }')

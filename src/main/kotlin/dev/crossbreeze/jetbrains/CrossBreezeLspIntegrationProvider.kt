@@ -59,6 +59,8 @@ internal class CrossBreezeDescriptor(project: Project, private val root: Path) :
     }
     override fun createInitializationOptions(): Any = mapOf(
         "aliases" to project.service<CrossBreezeSettings>().aliases(),
+        "checkCssProperties" to project.service<CrossBreezeSettings>().state.checkCssProperties,
+        "checkCssValues" to project.service<CrossBreezeSettings>().state.checkCssValues,
         "excludedRoots" to ProjectRootManager.getInstance(project).contentSourceRoots.let {
             com.intellij.openapi.module.ModuleManager.getInstance(project).modules.flatMap { module ->
                 com.intellij.openapi.roots.ModuleRootManager.getInstance(module).excludeRoots.map { it.path }
