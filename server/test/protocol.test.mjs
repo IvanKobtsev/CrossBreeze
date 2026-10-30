@@ -39,7 +39,7 @@ test('stdio lifecycle, diagnostics, navigation, highlighting, unsaved edits and 
   assert.equal(initialize.result.capabilities.hoverProvider, true)
   assert.equal(initialize.result.capabilities.semanticTokensProvider.full, true)
   send({ jsonrpc: '2.0', method: 'initialized', params: {} })
-  const text = '/* 😀 */ @import lib from "./lib"; .button { @:lib.paint; }'
+  const text = '/* 😀 */ @import lib from "./lib"; svg|a.button#main[data-kind="hello"]:not(.disabled)::after > * { &:hover { @:lib.paint; } }'
   send({ jsonrpc: '2.0', method: 'textDocument/didOpen', params: { textDocument: { uri, languageId: 'xcss', version: 1, text } } })
   const params = { textDocument: { uri }, position: { line: 0, character: text.indexOf('paint') } }
   const definition = await request('textDocument/definition', params)
@@ -51,6 +51,22 @@ test('stdio lifecycle, diagnostics, navigation, highlighting, unsaved edits and 
   const tokens = await request('textDocument/semanticTokens/full', { textDocument: { uri } })
   assert(tokens.result.data.length > 0)
   assert.equal(tokens.result.data.length % 5, 0)
+  const legend = initialize.result.capabilities.semanticTokensProvider.legend.tokenTypes
+  const highlighted = []
+  let line = 0, character = 0
+  for (let i = 0; i < tokens.result.data.length; i += 5) {
+    const [deltaLine, deltaCharacter, length, type] = tokens.result.data.slice(i, i + 5)
+    line += deltaLine
+    character = deltaLine === 0 ? character + deltaCharacter : deltaCharacter
+    highlighted.push([legend[type], text.split('\n')[line].slice(character, character + length)])
+  }
+  assert(highlighted.some(([type, value]) => type === 'class' && value === 'button'))
+  assert(highlighted.some(([type, value]) => type === 'class' && value === 'disabled'))
+  for (const [kind, value] of [
+    ['selectorNamespace', 'svg|'], ['selectorTag', 'a'], ['selectorId', 'main'],
+    ['selectorAttribute', 'data-kind'], ['pseudoClass', ':not'], ['pseudoElement', '::after'],
+    ['selectorCombinator', '>'], ['selectorUniversal', '*'], ['selectorNesting', '&'],
+  ]) assert(highlighted.some(([type, name]) => type === kind && name === value), `${kind}: ${JSON.stringify(highlighted)}`)
   send({ jsonrpc: '2.0', method: 'textDocument/didChange', params: { textDocument: { uri, version: 2 }, contentChanges: [{ text: '.button { @:missing; }' }] } })
   assert.deepEqual((await request('textDocument/definition', { ...params, position: { line: 0, character: 13 } })).result, [])
   await new Promise(resolve => setTimeout(resolve, 300))

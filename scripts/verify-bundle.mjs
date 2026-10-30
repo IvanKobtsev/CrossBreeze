@@ -18,12 +18,21 @@ for (const item of manifest) {
 }
 const require = createRequire(join(root, 'index.cjs'))
 const { LanguageService, languageServiceCapabilities } = require('@cross-css/native')
-assert.equal(languageServiceCapabilities().apiVersion, 2)
+assert.equal(languageServiceCapabilities().apiVersion, 3)
 const service = new LanguageService()
 service.setFile('file:///test.xcss', 1, '.button { color: red; }')
 assert.equal(service.document('file:///test.xcss').diagnostics.length, 0)
 assert(service.document('file:///test.xcss').tokens.length)
 assert.equal(service.cssDeclarations('file:///test.xcss').declarations[0].property, 'color')
+service.setFile('file:///selectors.xcss', 1, '#root, .parent { svg|a.button[data-kind="hello"]:where(.disabled)::after > * { & + .child {} } }')
+const selectors = service.selectors('file:///selectors.xcss')
+assert.equal(selectors.selectors.length, 4)
+assert.deepEqual(selectors.selectors[2].specificity, { ids: 1, classes: 2, types: 2 })
+const legend = languageServiceCapabilities().tokenTypes
+const selectorTokens = service.document('file:///selectors.xcss').tokens
+for (const kind of ['class', 'selectorId', 'selectorTag', 'selectorAttribute', 'pseudoClass', 'pseudoElement', 'selectorUniversal', 'selectorNesting', 'selectorCombinator', 'selectorNamespace']) {
+  assert(selectorTokens.some(token => legend[token.tokenType] === kind), `Missing bundled selector token: ${kind}`)
+}
 const worker = new Worker(join(root, 'worker.cjs'))
 let id = 0
 async function call(method, ...args) {

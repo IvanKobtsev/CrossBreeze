@@ -72,6 +72,7 @@ internal class CrossBreezeDescriptor(project: Project, private val root: Path) :
     }
     override val lspCustomization = object : LspCustomization() {
         override val semanticTokensCustomizer = object : LspSemanticTokensSupport() {
+            override fun shouldAskServerForSemanticTokens(psiFile: com.intellij.psi.PsiFile) = psiFile.language == XcssLanguage
             override val tokenTypes = XcssColors.semantic.keys.toList()
             override val tokenModifiers = listOf("declaration")
             override fun getTextAttributesKey(tokenType: String, modifiers: List<String>) = XcssColors.semantic[tokenType]

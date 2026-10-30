@@ -8,7 +8,7 @@ references, hover, lexical highlighting, and semantic highlighting.
 1. Open [GitHub Actions](https://github.com/IvanKobtsev/CrossBreeze/actions/workflows/ci.yml)
    and select a successful CI run. You must be signed into GitHub to download artifacts.
 2. Download **crossbreeze-webstorm-plugin** from the run's Artifacts section.
-3. Extract GitHub's artifact archive. Keep the inner `crossbreeze-0.1.0.zip` intact.
+3. Extract GitHub's artifact archive. Keep the inner `crossbreeze-0.1.1.zip` intact.
 4. In WebStorm, open **Settings → Plugins → gear → Install Plugin from Disk**,
    select that inner ZIP, and restart if prompted.
 5. Configure a **local Node.js runtime** under **Languages & Frameworks → JavaScript Runtime**.
@@ -39,6 +39,13 @@ root. Configuration changes restart the server. The status-bar item shows server
 state; click it or choose **Tools → Restart CrossBreeze Language Server** to restart.
 Semantic colors can be customized under **Editor → Color Scheme → XCSS**. Lexical
 highlighting remains available when Node or the server is unavailable.
+
+The **Selectors** color group provides separate styles for classes, IDs, tags,
+attribute names, pseudo-classes, pseudo-elements, universal selectors, nesting,
+combinators, and namespace prefixes. Full selector classification requires XCSS
+language-service API v3, included through the pinned 0.3.3 engine. Specificity is
+calculated by XCSS's selector API; editor specificity hints and warnings are not
+enabled in this release.
 
 Navigation currently covers XCSS files. Completion, rename, style lint rules, fixes,
 JS/TS `styles.button` navigation, remote Node runtimes, and CSS generation in the
@@ -87,7 +94,7 @@ sandbox. Open a multi-file XCSS project, check diagnostics, Ctrl/Cmd-click an
 injection or variable, find references, inspect hover, and edit an unsaved document
 to verify live highlighting and diagnostics. Configure Node inside the sandbox.
 
-CrossBreeze pins **@cross-css/native 0.3.2 from npm**, including package-lock
+CrossBreeze pins **@cross-css/native 0.3.3 from npm**, including package-lock
 integrity. Packaging fetches all eight locked native tarballs, verifies SHA-512
 integrity, includes licenses, and records per-file hashes. There are no sibling
 XCSS checkout, Git dependency, local tarball, or development-binary fallbacks.

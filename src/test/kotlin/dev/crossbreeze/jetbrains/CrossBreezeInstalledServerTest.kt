@@ -68,9 +68,18 @@ class CrossBreezeInstalledServerTest : BasePlatformTestCase() {
             val initialized = response(1)
             assertTrue(initialized.getAsJsonObject("result").getAsJsonObject("capabilities").getAsJsonObject("semanticTokensProvider").get("full").asBoolean)
             send("""{"jsonrpc":"2.0","method":"initialized","params":{}}""")
-            send("""{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"untitled:smoke.xcss","languageId":"xcss","version":1,"text":"@vars { --size: length = 1px; --duration: time = 1s; } .button { width: --size; dispay: flex; display: fex; height: --duration; }"}}}""")
+            send("""{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"untitled:smoke.xcss","languageId":"xcss","version":1,"text":"@vars { --size: length = 1px; --duration: time = 1s; } .button { width: --size; dispay: flex; display: fex; height: --duration; } svg|a#root[data-kind='hello']:where(.item)::after > * { & + .child {} }"}}}""")
             send("""{"jsonrpc":"2.0","id":2,"method":"textDocument/semanticTokens/full","params":{"textDocument":{"uri":"untitled:smoke.xcss"}}}""")
-            assertTrue(response(2).getAsJsonObject("result").getAsJsonArray("data").size() > 0)
+            val semanticData = response(2).getAsJsonObject("result").getAsJsonArray("data")
+            assertTrue(semanticData.size() > 0)
+            val legend = initialized.getAsJsonObject("result").getAsJsonObject("capabilities")
+                .getAsJsonObject("semanticTokensProvider").getAsJsonObject("legend").getAsJsonArray("tokenTypes")
+                .map { it.asString }
+            val highlightedTypes = (0 until semanticData.size() step 5).map { legend[semanticData[it + 3].asInt] }.toSet()
+            for (type in listOf("class", "selectorId", "selectorTag", "selectorAttribute", "pseudoClass", "pseudoElement",
+                "selectorUniversal", "selectorNesting", "selectorCombinator", "selectorNamespace")) {
+                assertTrue(type in highlightedTypes, "Missing installed selector highlighting: $type")
+            }
             val published = CompletableFuture.supplyAsync {
                 notifications.firstOrNull { it.get("method")?.asString == "textDocument/publishDiagnostics" }?.let { return@supplyAsync it }
                 while (true) {

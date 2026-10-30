@@ -1,6 +1,6 @@
 {
   "name": "crossbreeze",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -14,7 +14,7 @@
     "verify:bundle": "node scripts/verify-bundle.mjs"
   },
   "dependencies": {
-    "@cross-css/native": "0.3.2",
+    "@cross-css/native": "0.3.3",
     "chokidar": "4.0.3",
     "css-tree": "3.2.1",
     "jsonc-parser": "3.3.1",
