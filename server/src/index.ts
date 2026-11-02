@@ -8,6 +8,8 @@ import { languageServiceCapabilities, type EditorDocument, type EditorHover, typ
 import { canonicalUri, isExcludedPath, type Aliases } from './project.js'
 import { defaultCssValidation, type CssValidationOptions } from './css-validation.js'
 import type { Diagnostic } from 'vscode-languageserver'
+import * as native from '@cross-css/native'
+import { formatEdits, formatOptions, type FormattingBinding, type SourceFormatResult } from './formatting.js'
 
 const [major, minor] = process.versions.node.split('.').map(Number)
 if (!(major === 20 && minor >= 19 || major === 22 && minor >= 12 || major > 22)) {
@@ -37,6 +39,7 @@ let watcher: FSWatcher | undefined
 let timer: ReturnType<typeof setTimeout> | undefined
 let options: { aliases?: Aliases; excludedRoots?: string[] } & Partial<CssValidationOptions> = {}
 let cssOptions = { ...defaultCssValidation }
+let workspaceConfiguration = false
 const open = new Map<string, { uri: string; version: number }>()
 const failed = (error: unknown) => connection.console.error(String(error))
 function scheduleDiagnostics() {
@@ -61,6 +64,7 @@ async function publish() {
   }
 }
 connection.onInitialize((params: InitializeParams) => {
+  workspaceConfiguration = params.capabilities.workspace?.configuration === true
   options = params.initializationOptions ?? {}
   cssOptions = {
     checkCssProperties: options.checkCssProperties !== false,
@@ -82,6 +86,7 @@ connection.onInitialize((params: InitializeParams) => {
   const capabilities = languageServiceCapabilities()
   return { capabilities: { positionEncoding: 'utf-16', textDocumentSync: TextDocumentSyncKind.Incremental,
     definitionProvider: true, referencesProvider: true, hoverProvider: true,
+    documentFormattingProvider: typeof (native as unknown as FormattingBinding).formatSource === 'function',
     semanticTokensProvider: { legend: { tokenTypes: capabilities.tokenTypes, tokenModifiers: capabilities.tokenModifiers }, full: true },
   }, serverInfo: { name: 'CrossBreeze', version: '0.1.0' } }
 })
@@ -133,6 +138,31 @@ connection.onReferences((params, token) => query<EditorLocation[]>('references',
 connection.onHover(async (params, token) => {
   const hover = await query<EditorHover | null>('hover', params.textDocument.uri, token, params.position)
   return hover ? { contents: { kind: 'plaintext' as const, value: hover.text }, range: hover.range } : null
+})
+connection.onDocumentFormatting(async (params, token) => {
+  const document = documents.get(params.textDocument.uri)
+  if (!document || document.languageId !== 'xcss') throw new ResponseError(ErrorCodes.InvalidParams, 'Open an XCSS document before formatting')
+  const version = document.version
+  const source = document.getText()
+  const check = () => {
+    if (token.isCancellationRequested) throw new ResponseError(LSPErrorCodes.RequestCancelled, 'Formatting canceled')
+    if (documents.get(params.textDocument.uri) !== document || document.version !== version) throw new ResponseError(LSPErrorCodes.ContentModified, 'Document changed during formatting')
+  }
+  check()
+  await ready
+  check()
+  try {
+    const settings = workspaceConfiguration
+      ? await connection.workspace.getConfiguration({ scopeUri: document.uri, section: 'crossbreeze.formatting' })
+      : undefined
+    check()
+    const result = await call<SourceFormatResult>('format', source, formatOptions(params.options, settings))
+    check()
+    return formatEdits(source, result)
+  } catch (error) {
+    if (error instanceof ResponseError) throw error
+    throw new ResponseError(LSPErrorCodes.RequestFailed, String(error instanceof Error ? error.message : error))
+  }
 })
 connection.languages.semanticTokens.on(async (params, token) => {
   const document = await query<EditorDocument>('document', params.textDocument.uri, token)

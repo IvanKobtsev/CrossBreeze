@@ -1,7 +1,7 @@
 # CrossBreeze
 
 XCSS language support for WebStorm 2026.2+: diagnostics, go-to-definition, find
-references, hover, lexical highlighting, and semantic highlighting.
+references, hover, lexical highlighting, semantic highlighting, and source formatting.
 
 ## Download and install
 
@@ -40,10 +40,30 @@ state; click it or choose **Tools → Restart CrossBreeze Language Server** to r
 Semantic colors can be customized under **Editor → Color Scheme → XCSS**. Lexical
 highlighting remains available when Node or the server is unavailable.
 
+Basic editing also works without the server: the IDE's line and block comment
+actions use CSS `/* ... */` comments, braces/parentheses/brackets and quotes are
+paired automatically, and Enter preserves indentation and adds a configured
+indent level inside opening delimiters. Enter between a matching pair places
+the closing delimiter on its own line. Pair insertion follows the IDE's Smart
+Keys settings; indentation uses the file's code-style tab/space settings.
+
+Use **Code → Reformat Code** for whole-file XCSS formatting. The formatter runs
+in the native Rust engine through the language server and includes XCSS variables,
+constants, injections, utilities, calls, and ordinary CSS. It uses the file's IDE
+indentation settings, right margin, and line separator. Configure defaults under
+**Editor → Code Style → XCSS**. Node and a running language server are required.
+
+CSS reference fixtures follow Prettier 3.6.2; exhaustive output compatibility is
+not guaranteed. Syntax errors leave the document unchanged; unresolved imports
+and semantic warnings do not block formatting. `@raw` bodies, unknown at-rules,
+and nodes following `/* prettier-ignore */` stay verbatim. Formatting preserves
+comments and declaration/import order. Selection and on-type formatting are not
+provided.
+
 The **Selectors** color group provides separate styles for classes, IDs, tags,
 attribute names, pseudo-classes, pseudo-elements, universal selectors, nesting,
 combinators, and namespace prefixes. Full selector classification requires XCSS
-language-service API v3, included through the pinned 0.3.3 engine. Specificity is
+language-service API v3, included through the pinned 0.5.0 engine. Specificity is
 calculated by XCSS's selector API; editor specificity hints and warnings are not
 enabled in this release.
 
@@ -94,7 +114,7 @@ sandbox. Open a multi-file XCSS project, check diagnostics, Ctrl/Cmd-click an
 injection or variable, find references, inspect hover, and edit an unsaved document
 to verify live highlighting and diagnostics. Configure Node inside the sandbox.
 
-CrossBreeze pins **@cross-css/native 0.3.3 from npm**, including package-lock
+CrossBreeze pins **@cross-css/native 0.5.0 from npm**, including package-lock
 integrity. Packaging fetches all eight locked native tarballs, verifies SHA-512
 integrity, includes licenses, and records per-file hashes. There are no sibling
 XCSS checkout, Git dependency, local tarball, or development-binary fallbacks.

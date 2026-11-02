@@ -17,7 +17,9 @@ for (const item of manifest) {
   }
 }
 const require = createRequire(join(root, 'index.cjs'))
-const { LanguageService, languageServiceCapabilities } = require('@cross-css/native')
+const { LanguageService, languageServiceCapabilities, formatSource } = require('@cross-css/native')
+assert.equal(typeof formatSource, 'function', 'Bundled engine must include the XCSS formatter')
+assert.equal(formatSource('.a{color:red}').text, '.a {\n  color: red;\n}\n')
 assert.equal(languageServiceCapabilities().apiVersion, 3)
 const service = new LanguageService()
 service.setFile('file:///test.xcss', 1, '.button { color: red; }')
@@ -50,6 +52,8 @@ async function call(method, ...args) {
 }
 try {
   await call('initialize', [], {}, [])
+  const formatted = await call('format', '.a{color:red}', { tabWidth: 2, useTabs: false, printWidth: 80, endOfLine: 'lf' })
+  assert.equal(formatted.text, '.a {\n  color: red;\n}\n')
   await call('update', 'untitled:css-smoke.xcss', '@vars { --t: time; } .a { dispay: flex; display: fex; width: --t; }', 1)
   const diagnostics = await call('cssDiagnostics', 'untitled:css-smoke.xcss', { checkCssProperties: true, checkCssValues: true })
   assert.deepEqual(diagnostics.map(d => d.code), ['css.unknown-property', 'css.invalid-value', 'css.type-mismatch'])

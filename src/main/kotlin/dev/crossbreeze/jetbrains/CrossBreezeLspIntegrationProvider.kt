@@ -21,6 +21,11 @@ import com.intellij.platform.lsp.api.LspServerListener
 import com.intellij.platform.lsp.api.ProjectWideLspClientDescriptor
 import com.intellij.platform.lsp.api.customization.LspCustomization
 import com.intellij.platform.lsp.api.customization.LspSemanticTokensSupport
+import com.intellij.platform.lsp.api.customization.LspFormattingSupport
+import com.intellij.application.options.CodeStyle
+import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.fileEditor.FileDocumentManager
+import org.eclipse.lsp4j.ConfigurationItem
 import org.eclipse.lsp4j.InitializeResult
 import org.eclipse.lsp4j.WorkspaceFolder
 import java.nio.file.Files
@@ -68,9 +73,29 @@ internal class CrossBreezeDescriptor(project: Project, private val root: Path) :
         },
     )
     override fun createInitializeParams() = super.createInitializeParams().apply {
-        workspaceFolders = ProjectRootManager.getInstance(project).contentRoots.map { WorkspaceFolder(it.toNioPath().toUri().toString(), it.name) }
+        workspaceFolders = ProjectRootManager.getInstance(project).contentRoots.filter { it.fileSystem.protocol == "file" }
+            .map { WorkspaceFolder(it.toNioPath().toUri().toString(), it.name) }
+    }
+    override fun getWorkspaceConfiguration(item: ConfigurationItem): Any? {
+        if (item.section != "crossbreeze.formatting") return null
+        return ReadAction.computeBlocking<Any?, RuntimeException> {
+            val file = item.scopeUri?.let { findFileByUri(it) } ?: return@computeBlocking null
+            if (file.extension != "xcss") return@computeBlocking null
+            val settings = CodeStyle.getSettings(project, file)
+            val indent = CodeStyle.getIndentOptions(project, file)
+            val separator = settings.lineSeparator ?: FileDocumentManager.getInstance().getLineSeparator(file, project)
+            mapOf(
+                "tabWidth" to if (indent.USE_TAB_CHARACTER) indent.TAB_SIZE else indent.INDENT_SIZE,
+                "useTabs" to indent.USE_TAB_CHARACTER,
+                "printWidth" to settings.getRightMargin(XcssLanguage),
+                "endOfLine" to if (separator == "\r\n") "crlf" else "lf",
+            )
+        }
     }
     override val lspCustomization = object : LspCustomization() {
+        override val formattingCustomizer = object : LspFormattingSupport() {
+            override fun shouldFormatThisFileExclusivelyByServer(file: VirtualFile, ideCanFormatThisFileItself: Boolean, serverExplicitlyWantsToFormatThisFile: Boolean) = file.extension == "xcss"
+        }
         override val semanticTokensCustomizer = object : LspSemanticTokensSupport() {
             override fun shouldAskServerForSemanticTokens(psiFile: com.intellij.psi.PsiFile) = psiFile.language == XcssLanguage
             override val tokenTypes = XcssColors.semantic.keys.toList()
