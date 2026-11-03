@@ -14,6 +14,12 @@ object XcssTokens {
     val PARAMETER = IElementType("PARAMETER", XcssLanguage)
     val PROPERTY = IElementType("PROPERTY", XcssLanguage)
     val PUNCTUATION = IElementType("PUNCTUATION", XcssLanguage)
+    val LBRACE = IElementType("LBRACE", XcssLanguage)
+    val RBRACE = IElementType("RBRACE", XcssLanguage)
+    val LPAREN = IElementType("LPAREN", XcssLanguage)
+    val RPAREN = IElementType("RPAREN", XcssLanguage)
+    val LBRACKET = IElementType("LBRACKET", XcssLanguage)
+    val RBRACKET = IElementType("RBRACKET", XcssLanguage)
 }
 /** Flat lexical fallback; XCSS Rust syntax remains the language authority. */
 class XcssLexer : LexerBase() {
@@ -88,6 +94,14 @@ class XcssLexer : LexerBase() {
             }
             return
         }
-        cursor++; type = XcssTokens.PUNCTUATION
+        cursor++; type = when (first) {
+            '{' -> XcssTokens.LBRACE
+            '}' -> XcssTokens.RBRACE
+            '(' -> XcssTokens.LPAREN
+            ')' -> XcssTokens.RPAREN
+            '[' -> XcssTokens.LBRACKET
+            ']' -> XcssTokens.RBRACKET
+            else -> XcssTokens.PUNCTUATION
+        }
     }
 }

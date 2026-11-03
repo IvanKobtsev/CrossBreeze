@@ -4,7 +4,7 @@
   <vendor url="https://github.com/IvanKobtsev/CrossBreeze">Ivan Kobtsev</vendor>
   <description><![CDATA[
     <p>XCSS language support for WebStorm: diagnostics, definition navigation,
-    references, hover, and semantic highlighting. Includes lexical highlighting
+    references, hover, semantic highlighting, and source formatting. Includes lexical highlighting
     while the language server starts. Uses the project's configured local Node.js runtime.</p>
   ]]></description>
   <depends>com.intellij.modules.platform</depends>
@@ -15,8 +15,13 @@
   <extensions defaultExtensionNs="com.intellij">
     <fileType name="XCSS" language="XCSS" extensions="xcss" implementationClass="dev.crossbreeze.jetbrains.XcssFileType" fieldName="INSTANCE"/>
     <lang.parserDefinition language="XCSS" implementationClass="dev.crossbreeze.jetbrains.XcssParserDefinition"/>
+    <lang.commenter language="XCSS" implementationClass="dev.crossbreeze.jetbrains.XcssCommenter"/>
+    <lang.braceMatcher language="XCSS" implementationClass="dev.crossbreeze.jetbrains.XcssBraceMatcher"/>
+    <lang.quoteHandler fileType="XCSS" implementationClass="dev.crossbreeze.jetbrains.XcssQuoteHandler"/>
+    <enterHandlerDelegate implementation="dev.crossbreeze.jetbrains.XcssEnterHandler"/>
     <lang.syntaxHighlighterFactory language="XCSS" implementationClass="dev.crossbreeze.jetbrains.XcssSyntaxHighlighterFactory"/>
     <colorSettingsPage implementation="dev.crossbreeze.jetbrains.XcssColorSettingsPage"/>
+    <langCodeStyleSettingsProvider implementation="dev.crossbreeze.jetbrains.XcssCodeStyleProvider"/>
     <platform.lsp.integrationProvider implementation="dev.crossbreeze.jetbrains.CrossBreezeLspIntegrationProvider"/>
     <projectConfigurable id="dev.crossbreeze.settings" displayName="CrossBreeze" instance="dev.crossbreeze.jetbrains.CrossBreezeConfigurable"/>
     <notificationGroup id="CrossBreeze" displayType="BALLOON"/>

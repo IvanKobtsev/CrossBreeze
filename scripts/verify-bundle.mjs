@@ -17,13 +17,24 @@ for (const item of manifest) {
   }
 }
 const require = createRequire(join(root, 'index.cjs'))
-const { LanguageService, languageServiceCapabilities } = require('@cross-css/native')
-assert.equal(languageServiceCapabilities().apiVersion, 2)
+const { LanguageService, languageServiceCapabilities, formatSource } = require('@cross-css/native')
+assert.equal(typeof formatSource, 'function', 'Bundled engine must include the XCSS formatter')
+assert.equal(formatSource('.a{color:red}').text, '.a {\n  color: red;\n}\n')
+assert.equal(languageServiceCapabilities().apiVersion, 3)
 const service = new LanguageService()
 service.setFile('file:///test.xcss', 1, '.button { color: red; }')
 assert.equal(service.document('file:///test.xcss').diagnostics.length, 0)
 assert(service.document('file:///test.xcss').tokens.length)
 assert.equal(service.cssDeclarations('file:///test.xcss').declarations[0].property, 'color')
+service.setFile('file:///selectors.xcss', 1, '#root, .parent { svg|a.button[data-kind="hello"]:where(.disabled)::after > * { & + .child {} } }')
+const selectors = service.selectors('file:///selectors.xcss')
+assert.equal(selectors.selectors.length, 4)
+assert.deepEqual(selectors.selectors[2].specificity, { ids: 1, classes: 2, types: 2 })
+const legend = languageServiceCapabilities().tokenTypes
+const selectorTokens = service.document('file:///selectors.xcss').tokens
+for (const kind of ['class', 'selectorId', 'selectorTag', 'selectorAttribute', 'pseudoClass', 'pseudoElement', 'selectorUniversal', 'selectorNesting', 'selectorCombinator', 'selectorNamespace']) {
+  assert(selectorTokens.some(token => legend[token.tokenType] === kind), `Missing bundled selector token: ${kind}`)
+}
 const worker = new Worker(join(root, 'worker.cjs'))
 let id = 0
 async function call(method, ...args) {
@@ -41,6 +52,8 @@ async function call(method, ...args) {
 }
 try {
   await call('initialize', [], {}, [])
+  const formatted = await call('format', '.a{color:red}', { tabWidth: 2, useTabs: false, printWidth: 80, endOfLine: 'lf' })
+  assert.equal(formatted.text, '.a {\n  color: red;\n}\n')
   await call('update', 'untitled:css-smoke.xcss', '@vars { --t: time; } .a { dispay: flex; display: fex; width: --t; }', 1)
   const diagnostics = await call('cssDiagnostics', 'untitled:css-smoke.xcss', { checkCssProperties: true, checkCssValues: true })
   assert.deepEqual(diagnostics.map(d => d.code), ['css.unknown-property', 'css.invalid-value', 'css.type-mismatch'])
