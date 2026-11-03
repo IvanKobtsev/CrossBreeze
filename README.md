@@ -96,6 +96,21 @@ name checks. Custom properties accept unrestricted values. XCSS directives and
 at-rule descriptors are excluded. At-rule validation, completion, and quick fixes
 are not included. Newly introduced CSS may require a CSSTree data update.
 
+## CSS value highlighting and colors
+
+CSS functions, value keywords, and color literals have separate styles under
+**Editor → Color Scheme → XCSS → CSS values**. Keywords follow CSS property
+grammar, so font names and animation names retain their own meaning.
+
+Literal named colors, hex, RGB/RGBA, and HSL/HSLA show WebStorm color swatches,
+including in gradients, XCSS initializers, and parameter defaults. Click a swatch
+to edit that literal with the native picker. Edits preserve hex/RGB/HSL families;
+named colors become hex. References and computed colors do not get editable
+swatches. Modern color spaces are not included yet.
+
+Ctrl-hover underlines resolved symbols; Ctrl+click and Go to Declaration navigate
+to their declarations.
+
 ## Development
 
 Install JDK 25 and a supported Node.js runtime, then run:

@@ -7,6 +7,8 @@ import { watch, type FSWatcher } from 'chokidar'
 import { languageServiceCapabilities, type EditorDocument, type EditorHover, type EditorLocation } from '@cross-css/native'
 import { canonicalUri, isExcludedPath, type Aliases } from './project.js'
 import { defaultCssValidation, type CssValidationOptions } from './css-validation.js'
+import { colorPresentation } from './css-values.js'
+import type { ColorInformation, DefinitionLink } from 'vscode-languageserver'
 import type { Diagnostic } from 'vscode-languageserver'
 import * as native from '@cross-css/native'
 import { formatEdits, formatOptions, type FormattingBinding, type SourceFormatResult } from './formatting.js'
@@ -40,6 +42,7 @@ let timer: ReturnType<typeof setTimeout> | undefined
 let options: { aliases?: Aliases; excludedRoots?: string[] } & Partial<CssValidationOptions> = {}
 let cssOptions = { ...defaultCssValidation }
 let workspaceConfiguration = false
+let definitionLinks = false
 const open = new Map<string, { uri: string; version: number }>()
 const failed = (error: unknown) => connection.console.error(String(error))
 function scheduleDiagnostics() {
@@ -65,6 +68,7 @@ async function publish() {
 }
 connection.onInitialize((params: InitializeParams) => {
   workspaceConfiguration = params.capabilities.workspace?.configuration === true
+  definitionLinks = params.capabilities.textDocument?.definition?.linkSupport === true
   options = params.initializationOptions ?? {}
   cssOptions = {
     checkCssProperties: options.checkCssProperties !== false,
@@ -85,7 +89,7 @@ connection.onInitialize((params: InitializeParams) => {
   watcher.on('error', error => connection.console.warn(`CrossBreeze file watcher: ${String(error)}`))
   const capabilities = languageServiceCapabilities()
   return { capabilities: { positionEncoding: 'utf-16', textDocumentSync: TextDocumentSyncKind.Incremental,
-    definitionProvider: true, referencesProvider: true, hoverProvider: true,
+    definitionProvider: true, referencesProvider: true, hoverProvider: true, colorProvider: true,
     documentFormattingProvider: typeof (native as unknown as FormattingBinding).formatSource === 'function',
     semanticTokensProvider: { legend: { tokenTypes: capabilities.tokenTypes, tokenModifiers: capabilities.tokenModifiers }, full: true },
   }, serverInfo: { name: 'CrossBreeze', version: '0.1.0' } }
@@ -133,7 +137,17 @@ async function query<T>(method: string, uri: string, token: CancellationToken, p
   if (generation !== epoch) throw new ResponseError(LSPErrorCodes.ContentModified, 'Document changed during analysis')
   return result
 }
-connection.onDefinition((params, token) => query<EditorLocation[]>('definition', params.textDocument.uri, token, params.position))
+connection.onDefinition((params, token) => definitionLinks
+  ? query<DefinitionLink[]>('definitionLinks', params.textDocument.uri, token, params.position)
+  : query<EditorLocation[]>('definition', params.textDocument.uri, token, params.position))
+connection.onDocumentColor((params, token) => query<ColorInformation[]>('colors', params.textDocument.uri, token))
+connection.onColorPresentation(async (params, token) => {
+  const colors = await query<ColorInformation[]>('colors', params.textDocument.uri, token)
+  const same = (a: ColorInformation) => a.range.start.line === params.range.start.line && a.range.start.character === params.range.start.character && a.range.end.line === params.range.end.line && a.range.end.character === params.range.end.character
+  const document = documents.get(params.textDocument.uri)
+  if (!document || !colors.some(same)) return []
+  return colorPresentation(document.getText(params.range), params.color, params.range)
+})
 connection.onReferences((params, token) => query<EditorLocation[]>('references', params.textDocument.uri, token, params.position, params.context.includeDeclaration))
 connection.onHover(async (params, token) => {
   const hover = await query<EditorHover | null>('hover', params.textDocument.uri, token, params.position)

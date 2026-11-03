@@ -4,6 +4,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 import { parse, type ParseError } from 'jsonc-parser'
 import { LanguageService, inspect } from '@cross-css/native'
+import { inspectValues } from './css-values.js'
+import { languageServiceCapabilities } from '@cross-css/native'
 import { validateCss, type CssValidationOptions } from './css-validation.js'
 
 export const excluded = new Set(['.git', '.idea', 'node_modules', 'dist', 'target', 'build', 'coverage'])
@@ -225,7 +227,18 @@ export class Project {
     uri = canonicalUri(uri)
     const service = this.isolated.get(uri) ?? this.service
     switch (method) {
-      case 'document': return service.document(uri)
+      case 'document': {
+        const document = service.document(uri)
+        const extra = inspectValues(service.cssValues(uri), languageServiceCapabilities().tokenTypes).tokens
+        document.tokens.push(...extra.filter(t => !document.tokens.some(a => a.line === t.line && a.character < t.character+t.length && t.character < a.character+a.length)))
+        document.tokens.sort((a,b) => a.line-b.line || a.character-b.character)
+        return document
+      }
+      case 'colors': return inspectValues(service.cssValues(uri), languageServiceCapabilities().tokenTypes).colors
+      case 'definitionLinks': {
+        const origin = service.hover(uri, position!)?.range
+        return service.definition(uri, position!).map(target => ({ originSelectionRange: origin, targetUri: target.uri, targetRange: target.range, targetSelectionRange: target.range }))
+      }
       case 'definition': return service.definition(uri, position!)
       case 'references': return service.references(uri, position!, includeDeclaration)
       case 'hover': return service.hover(uri, position!) ?? null

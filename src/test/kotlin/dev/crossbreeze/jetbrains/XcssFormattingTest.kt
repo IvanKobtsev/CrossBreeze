@@ -88,6 +88,93 @@ class XcssFormattingTest : BasePlatformTestCase() {
             }, 20)
         }
     }
+    fun testNativeColorProviderChangesLiteralAndUndo() {
+        val node = System.getenv("CROSSBREEZE_TEST_NODE") ?: "node"
+        com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterManager.getInstance(project).setInterpreterRef(
+            com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterRef.create(
+                com.intellij.javascript.nodejs.interpreter.local.NodeJsLocalInterpreter(node)), testRootDisposable)
+        project.getService(CrossBreezeSettings::class.java).state.enabled = true
+        val source = ".a { color: red; }"
+        myFixture.configureFromExistingVirtualFile(myFixture.tempDirFixture.createFile("format.xcss", source))
+        val manager = com.intellij.platform.lsp.api.LspClientManager.getInstance(project)
+        val provider = com.intellij.openapi.extensions.ExtensionPointName.create<com.intellij.platform.lsp.api.LspIntegrationProvider>("com.intellij.platform.lsp.integrationProvider")
+            .extensionList.filterIsInstance<CrossBreezeLspIntegrationProvider>().single()
+        manager.ensureClientStarted(CrossBreezeLspIntegrationProvider::class.java, provider.descriptorFor(project))
+        try {
+            com.intellij.testFramework.PlatformTestUtil.waitWithEventsDispatching("XCSS language server did not start", {
+                manager.getClients(CrossBreezeLspIntegrationProvider::class.java).any { it.state == com.intellij.platform.lsp.api.LspServerState.Running }
+            }, 20)
+            // Fixture editors bypass the normal file-open synchronization listener.
+            val client = manager.getClients(CrossBreezeLspIntegrationProvider::class.java).single()
+            val uri = client.getDocumentIdentifier(myFixture.file.virtualFile).uri
+            client.sendNotification { server ->
+                server.textDocumentService.didOpen(org.eclipse.lsp4j.DidOpenTextDocumentParams(
+                    org.eclipse.lsp4j.TextDocumentItem(uri, "xcss", 1, source)))
+            }
+            val provider = XcssColorProvider()
+            val element = myFixture.file.findElementAt(source.indexOf("red"))!!
+            val future = com.intellij.openapi.application.ReadAction.nonBlocking<java.awt.Color?> {
+                provider.getColorFrom(element)
+            }.submit(com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService())
+            com.intellij.testFramework.PlatformTestUtil.waitWithEventsDispatching("Color icon lookup did not finish", { future.isDone }, 20)
+            assertEquals(java.awt.Color.RED, future.get())
+            provider.setColorTo(element, java.awt.Color(0, 255, 0, 128))
+            com.intellij.testFramework.PlatformTestUtil.waitWithEventsDispatching("Color picker did not apply its edit", {
+                myFixture.editor.document.text == ".a { color: #00ff0080; }"
+            }, 20)
+            myFixture.performEditorAction(com.intellij.openapi.actionSystem.IdeActions.ACTION_UNDO)
+            myFixture.checkResult(source)
+        } finally {
+            project.getService(CrossBreezeSettings::class.java).state.enabled = false
+            manager.stopClients(CrossBreezeLspIntegrationProvider::class.java)
+            com.intellij.testFramework.PlatformTestUtil.waitWithEventsDispatching("XCSS language server did not stop", {
+                manager.getClients(CrossBreezeLspIntegrationProvider::class.java).none { it.state == com.intellij.platform.lsp.api.LspServerState.Running || it.state == com.intellij.platform.lsp.api.LspServerState.Initializing }
+            }, 20)
+        }
+    }
+    fun testModifierHoverResolvesWithoutNavigationAction() {
+        val node = System.getenv("CROSSBREEZE_TEST_NODE") ?: "node"
+        com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterManager.getInstance(project).setInterpreterRef(
+            com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterRef.create(
+                com.intellij.javascript.nodejs.interpreter.local.NodeJsLocalInterpreter(node)), testRootDisposable)
+        project.getService(CrossBreezeSettings::class.java).state.enabled = true
+        val source = "@vars { --tone: color = red; } .a { color: --tone; }"
+        myFixture.configureFromExistingVirtualFile(myFixture.tempDirFixture.createFile("format.xcss", source))
+        val manager = com.intellij.platform.lsp.api.LspClientManager.getInstance(project)
+        val provider = com.intellij.openapi.extensions.ExtensionPointName.create<com.intellij.platform.lsp.api.LspIntegrationProvider>("com.intellij.platform.lsp.integrationProvider")
+            .extensionList.filterIsInstance<CrossBreezeLspIntegrationProvider>().single()
+        manager.ensureClientStarted(CrossBreezeLspIntegrationProvider::class.java, provider.descriptorFor(project))
+        try {
+            com.intellij.testFramework.PlatformTestUtil.waitWithEventsDispatching("XCSS language server did not start", {
+                manager.getClients(CrossBreezeLspIntegrationProvider::class.java).any { it.state == com.intellij.platform.lsp.api.LspServerState.Running }
+            }, 20)
+            // Fixture editors bypass the normal file-open synchronization listener.
+            val client = manager.getClients(CrossBreezeLspIntegrationProvider::class.java).single()
+            val uri = client.getDocumentIdentifier(myFixture.file.virtualFile).uri
+            client.sendNotification { server ->
+                server.textDocumentService.didOpen(org.eclipse.lsp4j.DidOpenTextDocumentParams(
+                    org.eclipse.lsp4j.TextDocumentItem(uri, "xcss", 1, source)))
+            }
+            val offset = source.lastIndexOf("--tone") + 2
+            val future = com.intellij.openapi.application.ReadAction.nonBlocking<Pair<com.intellij.psi.PsiReference?, com.intellij.psi.PsiElement?>> {
+                val reference = myFixture.file.findElementAt(offset)!!.parent.reference
+                reference to reference?.resolve()
+            }.submit(com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService())
+            com.intellij.testFramework.PlatformTestUtil.waitWithEventsDispatching("Modifier hover lookup did not finish", { future.isDone }, 20)
+            val (resolvedReference, resolvedTarget) = future.get()
+            val reference = resolvedReference!!
+            assertEquals(com.intellij.openapi.util.TextRange(0, 6), reference.rangeInElement)
+            assertEquals(source.lastIndexOf("--tone"), reference.element.textRange.startOffset)
+            val target = resolvedTarget!!
+            assertEquals(source.indexOf("--tone"), target.textRange.startOffset)
+        } finally {
+            project.getService(CrossBreezeSettings::class.java).state.enabled = false
+            manager.stopClients(CrossBreezeLspIntegrationProvider::class.java)
+            com.intellij.testFramework.PlatformTestUtil.waitWithEventsDispatching("XCSS language server did not stop", {
+                manager.getClients(CrossBreezeLspIntegrationProvider::class.java).none { it.state == com.intellij.platform.lsp.api.LspServerState.Running || it.state == com.intellij.platform.lsp.api.LspServerState.Initializing }
+            }, 20)
+        }
+    }
     fun testUnavailableServerLeavesSourceUnchanged() {
         myFixture.configureByText("format.xcss", ".a{color:red}")
         myFixture.performEditorAction(com.intellij.openapi.actionSystem.IdeActions.ACTION_EDITOR_REFORMAT)

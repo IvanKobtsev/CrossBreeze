@@ -16,14 +16,20 @@ class XcssParserDefinition : ParserDefinition {
     override fun createLexer(project: Project?) = XcssLexer()
     override fun createParser(project: Project?) = PsiParser { root, builder ->
         val marker = builder.mark()
-        while (!builder.eof()) builder.advanceLexer()
+        while (!builder.eof()) {
+            if (builder.tokenType == XcssTokens.PARAMETER || builder.tokenType == XcssTokens.VARIABLE) {
+                val symbol = builder.mark()
+                builder.advanceLexer()
+                symbol.done(XcssTokens.SYMBOL)
+            } else builder.advanceLexer()
+        }
         marker.done(root)
         builder.treeBuilt
     }
     override fun getFileNodeType() = FILE
     override fun getCommentTokens() = TokenSet.create(XcssTokens.COMMENT)
     override fun getStringLiteralElements() = TokenSet.create(XcssTokens.STRING)
-    override fun createElement(node: ASTNode): PsiElement = ASTWrapperPsiElement(node)
+    override fun createElement(node: ASTNode): PsiElement = if (node.elementType == XcssTokens.SYMBOL) XcssSymbolPsiElement(node) else ASTWrapperPsiElement(node)
     override fun createFile(viewProvider: FileViewProvider): PsiFile = object : PsiFileBase(viewProvider, XcssLanguage) {
         override fun getFileType() = XcssFileType.INSTANCE
     }

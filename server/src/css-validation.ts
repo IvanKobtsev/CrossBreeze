@@ -13,12 +13,12 @@ export const representatives: Readonly<Record<string, string>> = Object.freeze({
   'transform-function': 'matrix(1, 0, 0, 1, 0, 0)', 'transform-list': 'matrix(1, 0, 0, 1, 0, 0)',
 })
 
-function advance(start: Position, text: string): Position {
+export function advance(start: Position, text: string): Position {
   // Match XCSS SourceFile's line model; offsets/columns count UTF-16 units.
   const lines = text.split('\n')
   return { line: start.line + lines.length - 1, character: lines.length === 1 ? start.character + text.length : lines.at(-1)!.length }
 }
-function project(parts: CssValuePart[]) {
+export function project(parts: CssValuePart[]) {
   let text = ''
   const spans: { start: number; end: number; part: CssValuePart }[] = []
   for (const part of parts) {
@@ -57,7 +57,10 @@ export function validateCss(input: CssDeclarations, options: CssValidationOption
         diagnostics.push(warning('css.invalid-value', `Invalid CSS value for “${property}”.`, declaration.valueRange))
         continue
       }
-      if (parsed.value.type !== 'Value' || !parsed.value.loc) continue
+      if (parsed.value.type !== 'Value' || !parsed.value.loc) {
+        diagnostics.push(warning('css.invalid-value', `Invalid CSS value for “${property}”.`, declaration.valueRange))
+        continue
+      }
       const begin = parsed.value.loc.start.offset - 2
       const end = parsed.value.loc.end.offset - 2
       const value = parse(projection.text.slice(begin, end), { context: 'value', positions: true, offset: begin })

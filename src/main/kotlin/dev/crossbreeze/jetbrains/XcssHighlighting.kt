@@ -13,6 +13,9 @@ import com.intellij.psi.tree.IElementType
 
 object XcssColors {
     val FUNCTION = TextAttributesKey.createTextAttributesKey("XCSS.INJECTION", Colors.FUNCTION_DECLARATION)
+    val CSS_FUNCTION = TextAttributesKey.createTextAttributesKey("XCSS.CSS_FUNCTION", Colors.FUNCTION_CALL)
+    val CSS_KEYWORD = TextAttributesKey.createTextAttributesKey("XCSS.CSS_KEYWORD", Colors.KEYWORD)
+    val CSS_COLOR = TextAttributesKey.createTextAttributesKey("XCSS.CSS_COLOR", Colors.CONSTANT)
     val PARAMETER = TextAttributesKey.createTextAttributesKey("XCSS.PARAMETER", Colors.PARAMETER)
     val VARIABLE = TextAttributesKey.createTextAttributesKey("XCSS.VARIABLE", Colors.INSTANCE_FIELD)
     val NAMESPACE = TextAttributesKey.createTextAttributesKey("XCSS.NAMESPACE", Colors.CLASS_REFERENCE)
@@ -33,14 +36,15 @@ object XcssColors {
         "namespace" to NAMESPACE, "type" to TYPE, "class" to CLASS, "enumMember" to KEYFRAME, "property" to PROPERTY,
         "selectorId" to SELECTOR_ID, "selectorTag" to SELECTOR_TAG, "selectorAttribute" to SELECTOR_ATTRIBUTE,
         "pseudoClass" to PSEUDO_CLASS, "pseudoElement" to PSEUDO_ELEMENT, "selectorUniversal" to SELECTOR_UNIVERSAL,
-        "selectorNesting" to SELECTOR_NESTING, "selectorCombinator" to SELECTOR_COMBINATOR, "selectorNamespace" to SELECTOR_NAMESPACE)
+        "selectorNesting" to SELECTOR_NESTING, "selectorCombinator" to SELECTOR_COMBINATOR, "selectorNamespace" to SELECTOR_NAMESPACE, "cssFunction" to CSS_FUNCTION, "cssKeyword" to CSS_KEYWORD, "cssColor" to CSS_COLOR)
     val displayNames = mapOf(
         "function" to "Injection", "parameter" to "Parameter", "variable" to "Variable", "namespace" to "Import namespace",
         "type" to "Type", "class" to "Selectors//Class", "enumMember" to "Keyframe", "property" to "Property",
         "selectorId" to "Selectors//ID", "selectorTag" to "Selectors//Tag", "selectorAttribute" to "Selectors//Attribute",
         "pseudoClass" to "Selectors//Pseudo-class", "pseudoElement" to "Selectors//Pseudo-element",
         "selectorUniversal" to "Selectors//Universal", "selectorNesting" to "Selectors//Nesting",
-        "selectorCombinator" to "Selectors//Combinator", "selectorNamespace" to "Selectors//Namespace prefix")
+        "selectorCombinator" to "Selectors//Combinator", "selectorNamespace" to "Selectors//Namespace prefix",
+        "cssFunction" to "CSS values//Function", "cssKeyword" to "CSS values//Keyword", "cssColor" to "CSS values//Color literal")
 }
 class XcssSyntaxHighlighter : SyntaxHighlighterBase() {
     override fun getHighlightingLexer() = XcssLexer()
@@ -74,6 +78,9 @@ class XcssColorSettingsPage : ColorSettingsPage {
         <selectorNamespace>svg|</selectorNamespace><selectorTag>a</selectorTag>.<class>button</class>#<selectorId>main</selectorId>[<selectorAttribute>data-kind</selectorAttribute>="hello"]<pseudoClass>:not</pseudoClass>(.<class>disabled</class>)<pseudoElement>::after</pseudoElement> {
           <selectorNesting>&</selectorNesting> <selectorCombinator>></selectorCombinator> <selectorUniversal>*</selectorUniversal><pseudoClass>:first-child</pseudoClass> { color: red; }
         }
+        .example { position: <cssKeyword>relative</cssKeyword>; cursor: <cssKeyword>pointer</cssKeyword>;
+          background: <cssFunction>linear-gradient</cssFunction>(<cssColor>red</cssColor>, <cssColor>#fff</cssColor>);
+          transform: <cssFunction>translateY</cssFunction>(-25.5px); }
         @keyframes <enumMember>spin</enumMember> { to { opacity: 1; } }
     """.trimIndent()
     override fun getAdditionalHighlightingTagToDescriptorMap() = XcssColors.semantic

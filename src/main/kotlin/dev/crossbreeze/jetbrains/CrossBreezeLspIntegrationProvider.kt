@@ -21,6 +21,7 @@ import com.intellij.platform.lsp.api.LspServerListener
 import com.intellij.platform.lsp.api.ProjectWideLspClientDescriptor
 import com.intellij.platform.lsp.api.customization.LspCustomization
 import com.intellij.platform.lsp.api.customization.LspSemanticTokensSupport
+import com.intellij.platform.lsp.api.customization.LspDocumentColorDisabled
 import com.intellij.platform.lsp.api.customization.LspFormattingSupport
 import com.intellij.application.options.CodeStyle
 import com.intellij.openapi.application.ReadAction
@@ -93,6 +94,8 @@ internal class CrossBreezeDescriptor(project: Project, private val root: Path) :
         }
     }
     override val lspCustomization = object : LspCustomization() {
+        // Editable ElementColorProvider icons replace the passive LSP inlays.
+        override val documentColorCustomizer = LspDocumentColorDisabled
         override val formattingCustomizer = object : LspFormattingSupport() {
             override fun shouldFormatThisFileExclusivelyByServer(file: VirtualFile, ideCanFormatThisFileItself: Boolean, serverExplicitlyWantsToFormatThisFile: Boolean) = file.extension == "xcss"
         }

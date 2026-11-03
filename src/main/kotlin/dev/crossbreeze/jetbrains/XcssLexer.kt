@@ -5,6 +5,7 @@ import com.intellij.psi.TokenType
 import com.intellij.psi.tree.IElementType
 
 object XcssTokens {
+    val SYMBOL = IElementType("SYMBOL", XcssLanguage)
     val COMMENT = IElementType("COMMENT", XcssLanguage)
     val STRING = IElementType("STRING", XcssLanguage)
     val NUMBER = IElementType("NUMBER", XcssLanguage)
@@ -75,12 +76,25 @@ class XcssLexer : LexerBase() {
         }
         val first = peek()
         if (first.isWhitespace()) { while (cursor < end && peek().isWhitespace()) cursor++; type = TokenType.WHITE_SPACE; return }
-        if (first.isDigit() || first == '.' && peek(1).isDigit()) {
-            cursor++
-            while (cursor < end && (name(peek()) || peek() == '.' || peek() == '%')) cursor++
+        fun digit(offset: Int = 0) = peek(offset) in '0'..'9'
+        val signed = (first == '+' || first == '-') && (digit(1) || peek(1) == '.' && digit(2))
+        if (digit() || first == '.' && digit(1) || signed) {
+            if (first == '+' || first == '-') cursor++
+            while (digit()) cursor++
+            if (peek() == '.' && digit(1)) { cursor++; while (digit()) cursor++ }
+            if ((peek() == 'e' || peek() == 'E') &&
+                (digit(1) || (peek(1) == '+' || peek(1) == '-') && digit(2))) {
+                cursor++
+                if (peek() == '+' || peek() == '-') cursor++
+                while (digit()) cursor++
+            }
+            if (peek() == '%') cursor++
+            else while (cursor < end) {
+                if (peek().code == 92) escape() else if (name(peek())) cursor++ else break
+            }
             type = XcssTokens.NUMBER; return
         }
-        if (first == '@' || first == '$' || name(first) || first == '\\') {
+        if (first == '@' || first == '$' || name(first) && (first != '-' || name(peek(1)) || peek(1).code == 92) || first.code == 92) {
             if (first == '\\') escape() else cursor++
             while (cursor < end) { if (peek() == '\\') escape() else if (name(peek())) cursor++ else break }
             var next = cursor
