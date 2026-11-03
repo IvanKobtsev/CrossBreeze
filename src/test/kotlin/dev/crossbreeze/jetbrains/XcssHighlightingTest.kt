@@ -29,10 +29,34 @@ class XcssHighlightingTest : BasePlatformTestCase() {
     fun testSemanticLegendAndLexicalFallback() {
         assertEquals(listOf("function", "parameter", "variable", "namespace", "type", "class", "enumMember", "property",
             "selectorId", "selectorTag", "selectorAttribute", "pseudoClass", "pseudoElement", "selectorUniversal",
-            "selectorNesting", "selectorCombinator", "selectorNamespace"), XcssColors.semantic.keys.toList())
+            "selectorNesting", "selectorCombinator", "selectorNamespace", "cssFunction", "cssKeyword", "cssColor"), XcssColors.semantic.keys.toList())
         assertTrue(XcssSyntaxHighlighter().getTokenHighlights(XcssTokens.VARIABLE).isNotEmpty())
         assertTrue(XcssSyntaxHighlighter().getTokenHighlights(XcssTokens.PARAMETER).isNotEmpty())
         assertTrue(XcssSyntaxHighlighter().getTokenHighlights(XcssTokens.COMMENT).isNotEmpty())
+    }
+    fun testNativeColorPickerSupportIsEnabled() {
+        assertTrue(com.intellij.openapi.editor.ElementColorProvider.EP_NAME.extensionList.any { it is XcssColorProvider })
+        val descriptor = CrossBreezeDescriptor(project, java.nio.file.Path.of("."))
+        assertEquals(com.intellij.platform.lsp.api.customization.LspDocumentColorDisabled, descriptor.lspCustomization.documentColorCustomizer)
+    }
+    fun testSignedNumbersAndRestart() {
+        val text = "-25.5px -.5px +0.5% -2 1e-3px --size -webkit-name 10px - 2px"
+        val lexer = XcssLexer()
+        lexer.start(text)
+        val numbers = mutableListOf<String>()
+        while (lexer.tokenType != null) {
+            val restart = XcssLexer()
+            restart.start(text, lexer.tokenStart, text.length, lexer.state)
+            assertEquals(lexer.tokenType, restart.tokenType)
+            assertEquals(lexer.tokenEnd, restart.tokenEnd)
+            val value = text.substring(lexer.tokenStart, lexer.tokenEnd)
+            if (value == "-") assertEquals(XcssTokens.PUNCTUATION, lexer.tokenType)
+            if (value == "--size") assertEquals(XcssTokens.VARIABLE, lexer.tokenType)
+            if (value == "-webkit-name") assertEquals(XcssTokens.IDENTIFIER, lexer.tokenType)
+            if (lexer.tokenType == XcssTokens.NUMBER) numbers.add(value)
+            lexer.advance()
+        }
+        assertEquals(listOf("-25.5px", "-.5px", "+0.5%", "-2", "1e-3px", "10px", "2px"), numbers)
     }
     fun testAliasesValidation() {
         assertEquals(listOf("src/*"), CrossBreezeSettings.parseAliases("""{"@styles/*":["src/*"]}""")["@styles/*"])
