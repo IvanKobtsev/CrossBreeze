@@ -74,6 +74,25 @@ Navigation currently covers XCSS files. Completion, rename, style lint rules, fi
 JS/TS `styles.button` navigation, remote Node runtimes, and CSS generation in the
 editor are outside this first release.
 
+### TypeScript declaration setup
+
+When an XCSS file or a TypeScript file importing XCSS is opened, CrossBreeze
+shows an editor banner if its TypeScript project is missing XCSS declarations.
+Choose **Add declarations** to create and open `xcss-env.d.ts` with a reference
+to `@cross-css/vite-plugin/client`. The file is placed in the configured source
+root, otherwise `src` when present, otherwise beside the TS configuration.
+The Vite plugin's client declaration must already be installed in the project.
+
+Existing client references, ambient `*.xcss` declarations, and the tsconfig
+`types` option suppress the banner, including inherited settings. Existing files
+are preserved; when the default name is occupied, CrossBreeze uses
+`crossbreeze-xcss-env.d.ts`. If an explicit file list or exclusion prevents TS
+from including the new file, a follow-up banner opens the TS configuration for
+you to include it. CrossBreeze does not change your tsconfig automatically.
+**Don't show again** remembers dismissal for that TS project. Banners refresh
+when declarations or TS configuration change. No project files are created
+until you choose the action.
+
 ## CSS validation
 
 CrossBreeze checks ordinary CSS declaration names and values as you type, including
