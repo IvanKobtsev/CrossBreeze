@@ -20,6 +20,7 @@
     <lang.braceMatcher language="XCSS" implementationClass="dev.crossbreeze.jetbrains.XcssBraceMatcher"/>
     <lang.quoteHandler fileType="XCSS" implementationClass="dev.crossbreeze.jetbrains.XcssQuoteHandler"/>
     <enterHandlerDelegate implementation="dev.crossbreeze.jetbrains.XcssEnterHandler"/>
+    <backspaceHandlerDelegate implementation="dev.crossbreeze.jetbrains.XcssBackspaceHandler" order="first"/>
     <lang.syntaxHighlighterFactory language="XCSS" implementationClass="dev.crossbreeze.jetbrains.XcssSyntaxHighlighterFactory"/>
     <colorSettingsPage implementation="dev.crossbreeze.jetbrains.XcssColorSettingsPage"/>
     <langCodeStyleSettingsProvider implementation="dev.crossbreeze.jetbrains.XcssCodeStyleProvider"/>

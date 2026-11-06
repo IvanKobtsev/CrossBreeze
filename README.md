@@ -46,6 +46,9 @@ paired automatically, and Enter preserves indentation and adds a configured
 indent level inside opening delimiters. Enter between a matching pair places
 the closing delimiter on its own line. Pair insertion follows the IDE's Smart
 Keys settings; indentation uses the file's code-style tab/space settings.
+When only tabs or spaces precede the caret, Backspace removes that indentation
+and the preceding newline in one press, preserving any text after the caret.
+On the first line, it clears the indentation to the start of the file.
 
 Use **Code → Reformat Code** for whole-file XCSS formatting. The formatter runs
 in the native Rust engine through the language server and includes XCSS variables,
@@ -62,8 +65,8 @@ provided.
 
 The **Selectors** color group provides separate styles for classes, IDs, tags,
 attribute names, pseudo-classes, pseudo-elements, universal selectors, nesting,
-combinators, and namespace prefixes. Full selector classification requires XCSS
-language-service API v3, included through the pinned 0.5.0 engine. Specificity is
+combinators, and namespace prefixes. Full selector classification uses XCSS
+language-service API v4, included through the pinned 0.7.1 engine. Specificity is
 calculated by XCSS's selector API; editor specificity hints and warnings are not
 enabled in this release.
 
@@ -129,7 +132,7 @@ sandbox. Open a multi-file XCSS project, check diagnostics, Ctrl/Cmd-click an
 injection or variable, find references, inspect hover, and edit an unsaved document
 to verify live highlighting and diagnostics. Configure Node inside the sandbox.
 
-CrossBreeze pins **@cross-css/native 0.5.0 from npm**, including package-lock
+CrossBreeze pins **@cross-css/native 0.7.1 from npm**, including package-lock
 integrity. Packaging fetches all eight locked native tarballs, verifies SHA-512
 integrity, includes licenses, and records per-file hashes. There are no sibling
 XCSS checkout, Git dependency, local tarball, or development-binary fallbacks.

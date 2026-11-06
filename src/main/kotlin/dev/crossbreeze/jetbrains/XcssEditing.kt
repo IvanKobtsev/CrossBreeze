@@ -4,11 +4,13 @@ import com.intellij.lang.BracePair
 import com.intellij.lang.Commenter
 import com.intellij.lang.PairedBraceMatcher
 import com.intellij.codeInsight.editorActions.SimpleTokenSetQuoteHandler
+import com.intellij.codeInsight.editorActions.BackspaceHandlerDelegate
 import com.intellij.codeInsight.editorActions.enter.EnterHandlerDelegate
 import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.actionSystem.EditorActionHandler
 import com.intellij.openapi.util.Ref
+import com.intellij.openapi.util.Key
 import com.intellij.psi.PsiFile
 import com.intellij.application.options.CodeStyle
 import com.intellij.psi.tree.IElementType
@@ -34,6 +36,34 @@ class XcssBraceMatcher : PairedBraceMatcher {
 }
 
 class XcssQuoteHandler : SimpleTokenSetQuoteHandler(XcssTokens.STRING)
+
+/** Finish the IDE's normal deletion by removing the remaining indentation and newline. */
+class XcssBackspaceHandler : BackspaceHandlerDelegate() {
+    override fun beforeCharDeleted(c: Char, file: PsiFile, editor: Editor) {
+        val caret = editor.caretModel.currentCaret
+        caret.putUserData(joinTarget, null)
+        if (file.language != XcssLanguage || caret.hasSelection()) return
+        val document = editor.document
+        val offset = caret.offset
+        val line = document.getLineNumber(offset)
+        val start = document.getLineStartOffset(line)
+        if (offset == start || (start until offset).any { document.charsSequence[it] !in " \t" }) return
+        caret.putUserData(joinTarget, if (line == 0) 0 else document.getLineEndOffset(line - 1))
+    }
+
+    override fun charDeleted(c: Char, file: PsiFile, editor: Editor): Boolean {
+        val caret = editor.caretModel.currentCaret
+        val target = caret.getUserData(joinTarget) ?: return false
+        caret.putUserData(joinTarget, null)
+        editor.document.deleteString(target, caret.offset)
+        caret.moveToOffset(target)
+        return true
+    }
+
+    companion object {
+        private val joinTarget = Key.create<Int>("crossbreeze.backspace.joinTarget")
+    }
+}
 
 /** Preserve existing indentation; add one configured level after an opening delimiter. */
 class XcssEnterHandler : EnterHandlerDelegate {

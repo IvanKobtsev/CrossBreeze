@@ -43,4 +43,71 @@ class XcssEditingTest : BasePlatformTestCase() {
         myFixture.performEditorAction(IdeActions.ACTION_EDITOR_ENTER)
         myFixture.checkResult("  content: \"{\";\n  <caret>")
     }
+
+    fun testBackspaceJoinsIndentedLine() {
+        for (indent in listOf("\t\t\t", "      ", " \t  \t")) {
+            myFixture.configureByText("test.xcss", ".a {\n$indent<caret>\n}")
+            myFixture.performEditorAction(IdeActions.ACTION_EDITOR_BACKSPACE)
+            myFixture.checkResult(".a {<caret>\n}")
+        }
+    }
+
+    fun testBackspacePreservesTextAfterCaret() {
+        myFixture.configureByText("test.xcss", ".a {\n\t\t<caret>color: red;\n}")
+        myFixture.performEditorAction(IdeActions.ACTION_EDITOR_BACKSPACE)
+        myFixture.checkResult(".a {<caret>color: red;\n}")
+    }
+
+    fun testBackspaceClearsFirstLineIndentation() {
+        myFixture.configureByText("test.xcss", " \t  <caret>.a {}")
+        myFixture.performEditorAction(IdeActions.ACTION_EDITOR_BACKSPACE)
+        myFixture.checkResult("<caret>.a {}")
+    }
+
+    fun testBackspaceAtDocumentStart() {
+        myFixture.configureByText("test.xcss", "<caret>.a {}")
+        myFixture.performEditorAction(IdeActions.ACTION_EDITOR_BACKSPACE)
+        myFixture.checkResult("<caret>.a {}")
+    }
+
+    fun testBackspaceDeletesOrdinaryCharacter() {
+        myFixture.configureByText("test.xcss", "\tcolor<caret>: red;")
+        myFixture.performEditorAction(IdeActions.ACTION_EDITOR_BACKSPACE)
+        myFixture.checkResult("\tcolo<caret>: red;")
+    }
+
+    fun testBackspaceDeletesSelection() {
+        myFixture.configureByText("test.xcss", ".a {\n\t<selection>\t</selection><caret>color: red;\n}")
+        myFixture.performEditorAction(IdeActions.ACTION_EDITOR_BACKSPACE)
+        myFixture.checkResult(".a {\n\t<caret>color: red;\n}")
+    }
+
+    fun testBackspaceDeletesPairedDelimiters() {
+        for ((open, close) in listOf('{' to '}', '(' to ')', '[' to ']')) {
+            myFixture.configureByText("test.xcss", "$open<caret>$close")
+            myFixture.performEditorAction(IdeActions.ACTION_EDITOR_BACKSPACE)
+            myFixture.checkResult("<caret>")
+        }
+    }
+
+    fun testBackspaceWithMultipleCarets() {
+        myFixture.configureByText("test.xcss", ".a {\n\t\t<caret>\n}\n.b {\n  \t<caret>color: red;\n}")
+        myFixture.performEditorAction(IdeActions.ACTION_EDITOR_BACKSPACE)
+        myFixture.checkResult(".a {<caret>\n}\n.b {<caret>color: red;\n}")
+    }
+
+    fun testBackspaceJoinCanBeUndone() {
+        val before = ".a {\n\t\t<caret>\n}"
+        myFixture.configureByText("test.xcss", before)
+        myFixture.performEditorAction(IdeActions.ACTION_EDITOR_BACKSPACE)
+        myFixture.checkResult(".a {<caret>\n}")
+        myFixture.performEditorAction(IdeActions.ACTION_UNDO)
+        myFixture.checkResult(before)
+    }
+
+    fun testBackspaceLeavesOtherLanguagesAlone() {
+        myFixture.configureByText("test.txt", "text\n\t\t<caret>")
+        myFixture.performEditorAction(IdeActions.ACTION_EDITOR_BACKSPACE)
+        myFixture.checkResult("text\n\t<caret>")
+    }
 }
