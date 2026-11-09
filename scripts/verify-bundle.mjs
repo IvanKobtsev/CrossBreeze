@@ -1,4 +1,4 @@
-import { cp, readFile, readdir, lstat, mkdtemp, rm } from 'node:fs/promises'
+import { cp, readFile, readdir, lstat, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
@@ -33,7 +33,9 @@ async function verify(root, target) {
   const require = createRequire(join(root, 'index.cjs'))
   const { name: binary } = require(join(root, 'node_modules', loader, 'platform.cjs'))
   assert(nativePackages(target).includes(binary))
-  assert.equal(require.resolve(binary), join(root, 'node_modules', binary, 'xcss.node'))
+  // The temporary directory may be reached through a symlink, such as /var on macOS.
+  const bundledBinary = join(root, 'node_modules', binary, 'xcss.node')
+  assert.equal(await realpath(require.resolve(binary)), await realpath(bundledBinary))
   const { LanguageService, languageServiceCapabilities, formatSource } = require(loader)
   assert.equal(typeof formatSource, 'function', 'Bundled engine must include the XCSS formatter')
   assert.equal(formatSource('.a{color:red}').text, '.a {\n  color: red;\n}\n')
