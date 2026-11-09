@@ -10,7 +10,7 @@ import kotlin.test.assertNull
 
 class XcssTypescriptSetupTest : BasePlatformTestCase() {
     private fun setup(config: String = """{"include":["src"]}""") = myFixture.addFileToProject("tsconfig.json", config).also {
-        myFixture.addFileToProject("node_modules/@cross-css/vite-plugin/client.d.ts", "declare module '*.xcss' {}")
+        myFixture.addFileToProject("node_modules/@cross-css/vite/client.d.ts", "declare module '*.xcss' {}")
         myFixture.addFileToProject("src/Button.tsx", "import styles from './Button.xcss';")
     }
 
@@ -34,7 +34,7 @@ class XcssTypescriptSetupTest : BasePlatformTestCase() {
     }
 
     fun testRecognizesClientReferenceAndTypesOption() {
-        setup("""{"include":["src"],"compilerOptions":{"types":["@cross-css/vite-plugin/client"]}}""")
+        setup("""{"include":["src"],"compilerOptions":{"types":["@cross-css/vite/client"]}}""")
         val file = myFixture.addFileToProject("src/Button.xcss", "").virtualFile
         assertNull(XcssTypescriptSetup.plan(project, file))
     }
@@ -75,8 +75,8 @@ class XcssTypescriptSetupTest : BasePlatformTestCase() {
     }
 
     fun testClientReferencesAndImportFormsAreRecognized() {
-        assertTrue(XcssTypescriptSetup.declaresXcss("/// <reference types='@cross-css/vite-plugin/client' />"))
-        assertTrue(XcssTypescriptSetup.declaresXcss("import '@cross-css/vite-plugin/client';"))
+        assertTrue(XcssTypescriptSetup.declaresXcss("/// <reference types='@cross-css/vite/client' />"))
+        assertTrue(XcssTypescriptSetup.declaresXcss("import '@cross-css/vite/client';"))
     }
 
     fun testExplicitFileListGetsAConfigurationHintWithoutCreatingDuplicates() {
@@ -91,7 +91,7 @@ class XcssTypescriptSetupTest : BasePlatformTestCase() {
 
     fun testInheritedTypeConfigurationSuppressesTheHint() {
         setup("""{"extends":"./base.json","include":["src"]}""")
-        myFixture.addFileToProject("base.json", """{"compilerOptions":{"types":["@cross-css/vite-plugin/client"]}}""")
+        myFixture.addFileToProject("base.json", """{"compilerOptions":{"types":["@cross-css/vite/client"]}}""")
         val file = myFixture.addFileToProject("src/Button.xcss", "").virtualFile
         assertNull(XcssTypescriptSetup.plan(project, file))
     }
@@ -106,5 +106,15 @@ class XcssTypescriptSetupTest : BasePlatformTestCase() {
         myFixture.addFileToProject("other/src/env.d.ts", XcssTypescriptSetup.CONTENT)
         val file = myFixture.addFileToProject("src/Button.xcss", "").virtualFile
         assertNotNull(XcssTypescriptSetup.plan(project, file))
+    }
+
+    fun testLegacyClientStillWorks() {
+        myFixture.addFileToProject("tsconfig.json", """{"include":["src"]}""")
+        myFixture.addFileToProject("node_modules/@cross-css/vite-plugin/client.d.ts", "declare module '*.xcss' {}")
+        val file = myFixture.addFileToProject("src/Button.xcss", "").virtualFile
+        val plan = requireNotNull(XcssTypescriptSetup.plan(project, file))
+        val created = requireNotNull(XcssTypescriptSetup.create(project, plan))
+        assertEquals("/// <reference types=\"@cross-css/vite-plugin/client\" />\n", VfsUtil.loadText(created))
+        assertNull(XcssTypescriptSetup.plan(project, file))
     }
 }

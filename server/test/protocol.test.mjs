@@ -70,7 +70,7 @@ test('stdio lifecycle, diagnostics, navigation, highlighting, unsaved edits and 
   send({ jsonrpc: '2.0', method: 'textDocument/didChange', params: { textDocument: { uri, version: 2 }, contentChanges: [{ text: '.button { @:missing; }' }] } })
   assert.deepEqual((await request('textDocument/definition', { ...params, position: { line: 0, character: 13 } })).result, [])
   await new Promise(resolve => setTimeout(resolve, 300))
-  assert(notifications.some(n => n.method === 'textDocument/publishDiagnostics' && n.params.version === 2 && n.params.diagnostics.some(d => d.code === 'binding.unknown-injection')), stderr)
+  assert(notifications.some(n => n.method === 'textDocument/publishDiagnostics' && n.params.version === 2 && n.params.diagnostics.some(d => d.code === 'XC-212')), stderr)
   const canceled = request('textDocument/semanticTokens/full', { textDocument: { uri } })
   send({ jsonrpc: '2.0', method: '$/cancelRequest', params: { id } })
   const canceledResult = await canceled

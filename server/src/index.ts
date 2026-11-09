@@ -1,10 +1,10 @@
 import { Worker } from 'node:worker_threads'
-import { dirname, join } from 'node:path'
+import { basename, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { createConnection, TextDocuments, TextDocumentSyncKind, ResponseError, LSPErrorCodes, ErrorCodes, type CancellationToken, type Position, type InitializeParams } from 'vscode-languageserver/node.js'
+import { createConnection, TextDocuments, TextDocumentSyncKind, ResponseError, LSPErrorCodes, ErrorCodes, DiagnosticSeverity, type CancellationToken, type Position, type InitializeParams } from 'vscode-languageserver/node.js'
 import { TextDocument } from 'vscode-languageserver-textdocument'
 import { watch, type FSWatcher } from 'chokidar'
-import { languageServiceCapabilities, type EditorDocument, type EditorHover, type EditorLocation } from '@cross-css/native'
+import { languageServiceCapabilities, type EditorDiagnostic, type EditorDocument, type EditorHover, type EditorLocation } from '@cross-css/native'
 import { canonicalUri, isExcludedPath, type Aliases } from './project.js'
 import { defaultCssValidation, type CssValidationOptions } from './css-validation.js'
 import { colorPresentation } from './css-values.js'
@@ -12,6 +12,7 @@ import type { ColorInformation, DefinitionLink } from 'vscode-languageserver'
 import type { Diagnostic } from 'vscode-languageserver'
 import * as native from '@cross-css/native'
 import { formatEdits, formatOptions, type FormattingBinding, type SourceFormatResult } from './formatting.js'
+import { typescriptFile, typescriptInput, type TypescriptTarget } from './typescript-projects.js'
 
 const [major, minor] = process.versions.node.split('.').map(Number)
 if (!(major === 20 && minor >= 19 || major === 22 && minor >= 12 || major > 22)) {
@@ -26,8 +27,9 @@ let pending = new Map<number, { resolve: (value: any) => void; reject: (error: E
 function call<T>(method: string, ...args: unknown[]): Promise<T> {
   return new Promise((resolve, reject) => { const id = ++nextId; pending.set(id, { resolve, reject }); worker.postMessage({ id, method, args }) })
 }
-worker.on('message', ({ id, result, error, warning, watchPaths }) => {
+worker.on('message', ({ id, result, error, warning, watchPaths, typescriptWatchPaths }) => {
   if (watchPaths) { watcher?.add(watchPaths); return }
+  if (typescriptWatchPaths) { watchTypescriptPaths(typescriptWatchPaths); return }
   if (warning) { connection.console.warn(warning); return }
   const request = pending.get(id)
   if (!request) return
@@ -38,33 +40,93 @@ worker.on('error', error => { for (const item of pending.values()) item.reject(e
 worker.on('exit', code => { if (!shutdown) { for (const item of pending.values()) item.reject(new Error(`Analysis worker exited (${code})`)); pending.clear(); process.exitCode = 1; connection.dispose() } })
 let ready: Promise<unknown> = Promise.resolve()
 let watcher: FSWatcher | undefined
+let typescriptWatcher: FSWatcher | undefined
+let watchedTypescriptPaths = new Set<string>()
 let timer: ReturnType<typeof setTimeout> | undefined
 let options: { aliases?: Aliases; excludedRoots?: string[] } & Partial<CssValidationOptions> = {}
 let cssOptions = { ...defaultCssValidation }
 let workspaceConfiguration = false
 let definitionLinks = false
-const open = new Map<string, { uri: string; version: number }>()
+interface OpenDocument { uri: string; version: number; text: string; stylesheet: boolean; typescript: boolean }
+const open = new Map<string, OpenDocument>()
 const failed = (error: unknown) => connection.console.error(String(error))
+function diskChanged(path: string) {
+  epoch++
+  ready = ready.then(() => call('change', pathToFileURL(path).href))
+  ready.catch(failed)
+  scheduleDiagnostics()
+}
+function watchTypescriptPaths(paths: string[]) {
+  if (!typescriptWatcher || shutdown) return
+  const next = new Set(paths)
+  void typescriptWatcher.unwatch([...watchedTypescriptPaths].filter(path => !next.has(path)))
+  typescriptWatcher.add(paths.filter(path => !watchedTypescriptPaths.has(path)))
+  watchedTypescriptPaths = next
+}
 function scheduleDiagnostics() {
   clearTimeout(timer)
   timer = setTimeout(() => { void publish().catch(failed) }, 150)
 }
 async function publish() {
-  await ready
   const generation = epoch
-  for (const [uri, document] of open) {
-    const result = await call<EditorDocument>('document', uri)
+  await ready
+  if (generation !== epoch || shutdown) return
+  const entries = [...open]
+  for (const [uri, document] of entries) {
+    if (!document.stylesheet) continue
+    const diagnostics = await call<EditorDiagnostic[]>('diagnostics', uri)
     const cssDiagnostics = await call<Diagnostic[]>('cssDiagnostics', uri, cssOptions).catch(error => {
       failed(error)
       return []
     })
-    if (generation !== epoch || open.get(uri)?.version !== document.version) return
-    connection.sendDiagnostics({ uri: document.uri, version: document.version, diagnostics: [...result.diagnostics.map((d): Diagnostic => ({
-      range: d.location.range, code: d.code, source: 'XCSS', message: d.message,
-      severity: d.severity === 'error' ? 1 : d.severity === 'warning' ? 2 : 3,
-      relatedInformation: d.related.map(location => ({ location, message: 'Related declaration' })),
-    })), ...cssDiagnostics] })
+    if (generation !== epoch || shutdown) return
+    sendDiagnostics(document, diagnostics, cssDiagnostics)
   }
+  const typescript = entries.filter(([, document]) => document.typescript)
+  let targets: TypescriptTarget[] = typescript.map(([uri]) => ({ uri }))
+  if (workspaceConfiguration && typescript.length) {
+    const configs = await connection.workspace.getConfiguration(typescript.map(([, document]) => ({
+      scopeUri: document.uri, section: 'crossbreeze.typescriptProject',
+    }))).catch(error => { failed(error); return [] })
+    targets = targets.map((target, index) => ({
+      ...target, config: typeof configs[index] === 'string' ? configs[index] : null,
+    }))
+  }
+  if (generation !== epoch || shutdown) return
+  if (!typescript.length && !watchedTypescriptPaths.size) return
+  const results = await call<Map<string, EditorDiagnostic[]>>('typescriptDiagnostics', targets).catch(error => {
+    failed(error)
+    return new Map<string, EditorDiagnostic[]>()
+  })
+  if (generation !== epoch || shutdown) return
+  for (const [uri, document] of typescript) sendDiagnostics(document, results.get(uri) ?? [])
+}
+function sendDiagnostics(document: OpenDocument, nativeDiagnostics: EditorDiagnostic[], cssDiagnostics: Diagnostic[] = []) {
+  const diagnostics = nativeDiagnostics.map((d): Diagnostic => ({
+    range: visibleRange(document.text, d.location.range),
+    code: d.code, source: 'XCSS', message: `${d.code} ${d.label} — ${d.message}`,
+    severity: d.severity === 'error' ? DiagnosticSeverity.Error
+      : d.severity === 'warning' ? DiagnosticSeverity.Warning : DiagnosticSeverity.Information,
+    relatedInformation: d.related.map(location => ({
+      location: { ...location, uri: open.get(location.uri)?.uri ?? location.uri },
+      message: 'Related declaration',
+    })),
+  }))
+  connection.sendDiagnostics({ uri: document.uri, version: document.version, diagnostics: [...diagnostics, ...cssDiagnostics] })
+}
+function visibleRange(text: string, range: Diagnostic['range']): Diagnostic['range'] {
+  const { line, character } = range.start
+  if (line !== range.end.line || character !== range.end.character) return range
+  const source = text.split(/\r\n|\n|\r/)[line]
+  if (!source?.length) return range
+  if (character < source.length) {
+    const length = source.codePointAt(character)! > 0xffff ? 2 : 1
+    return { start: range.start, end: { line, character: character + length } }
+  }
+  const last = source.charCodeAt(source.length - 1)
+  const previous = source.charCodeAt(source.length - 2)
+  const length = last >= 0xdc00 && last <= 0xdfff && previous >= 0xd800 && previous <= 0xdbff ? 2 : 1
+  return { start: { line, character: source.length - length }, end: { line, character: source.length } }
 }
 connection.onInitialize((params: InitializeParams) => {
   workspaceConfiguration = params.capabilities.workspace?.configuration === true
@@ -77,16 +139,19 @@ connection.onInitialize((params: InitializeParams) => {
   const roots = (params.workspaceFolders?.map(folder => folder.uri) ?? (params.rootUri ? [params.rootUri] : [])).filter(uri => uri.startsWith('file:')).map(uri => fileURLToPath(canonicalUri(uri)))
   ready = call('initialize', roots, options.aliases ?? {}, options.excludedRoots ?? [])
   watcher = watch(roots, { ignoreInitial: true, followSymlinks: false, ignored: (path, stats) =>
-    isExcludedPath(path, roots, options.excludedRoots) || Boolean(stats?.isFile() && !path.endsWith('.xcss') && !path.endsWith('.json')),
+    isExcludedPath(path, roots, options.excludedRoots) || Boolean(stats?.isFile() && !typescriptInput.test(path)),
   })
   watcher.on('all', (event, path) => {
-    if (!['add', 'change', 'unlink'].includes(event)) return
-    epoch++
-    ready = ready.then(() => call('change', pathToFileURL(path).href))
-    ready.catch(failed)
-    scheduleDiagnostics()
+    if (['add', 'change', 'unlink'].includes(event)) diskChanged(path)
   })
   watcher.on('error', error => connection.console.warn(`CrossBreeze file watcher: ${String(error)}`))
+  typescriptWatcher = watch([], { ignoreInitial: true, followSymlinks: false, ignored: (path, stats) =>
+    ['.git', '.pnpm'].includes(basename(path)) || Boolean(stats?.isFile() && !typescriptInput.test(path)),
+  })
+  typescriptWatcher.on('all', (event, path) => {
+    if (['add', 'change', 'unlink', 'addDir', 'unlinkDir'].includes(event)) diskChanged(path)
+  })
+  typescriptWatcher.on('error', error => connection.console.warn(`CrossBreeze TypeScript file watcher: ${String(error)}`))
   const capabilities = languageServiceCapabilities()
   return { capabilities: { positionEncoding: 'utf-16', textDocumentSync: TextDocumentSyncKind.Incremental,
     definitionProvider: true, referencesProvider: true, hoverProvider: true, colorProvider: true,
@@ -97,9 +162,12 @@ connection.onInitialize((params: InitializeParams) => {
 documents.onDidChangeContent(({ document }) => {
   const uri = canonicalUri(document.uri)
   if ((open.get(uri)?.version ?? -1) >= document.version) return
-  open.set(uri, { uri: document.uri, version: document.version })
+  const stylesheet = document.languageId === 'xcss'
+  const typescript = uri.startsWith('file:') && typescriptFile.test(fileURLToPath(uri))
+  const current = { uri: document.uri, version: document.version, text: document.getText(), stylesheet, typescript }
+  open.set(uri, current)
   epoch++
-  ready = ready.then(() => call('update', uri, document.getText(), document.version))
+  ready = ready.then(() => call('update', uri, current.text, current.version, stylesheet, current.uri))
   ready.catch(failed)
   scheduleDiagnostics()
 })
@@ -107,7 +175,7 @@ documents.onDidClose(({ document }) => {
   const uri = canonicalUri(document.uri)
   open.delete(uri)
   epoch++
-  ready = ready.then(() => call('close', uri))
+  ready = ready.then(() => call('close', uri, document.languageId === 'xcss'))
   ready.catch(failed)
   connection.sendDiagnostics({ uri: document.uri, diagnostics: [] })
   scheduleDiagnostics()
@@ -155,7 +223,8 @@ connection.onHover(async (params, token) => {
 })
 connection.onDocumentFormatting(async (params, token) => {
   const document = documents.get(params.textDocument.uri)
-  if (!document || document.languageId !== 'xcss') throw new ResponseError(ErrorCodes.InvalidParams, 'Open an XCSS document before formatting')
+  if (!document) throw new ResponseError(ErrorCodes.InvalidParams, 'Open an XCSS document before formatting')
+  if (document.languageId !== 'xcss') return null
   const version = document.version
   const source = document.getText()
   const check = () => {
@@ -188,7 +257,12 @@ connection.languages.semanticTokens.on(async (params, token) => {
   }
   return { data }
 })
-connection.onShutdown(async () => { shutdown = true; clearTimeout(timer); await watcher?.close(); await worker.terminate() })
+connection.onShutdown(async () => {
+  shutdown = true
+  clearTimeout(timer)
+  await Promise.all([watcher?.close(), typescriptWatcher?.close()])
+  await worker.terminate()
+})
 connection.onExit(() => { shutdown = true; void worker.terminate() })
 documents.listen(connection)
 connection.listen()

@@ -4,6 +4,7 @@ import com.intellij.execution.ExecutionException
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterManager
 import com.intellij.javascript.nodejs.interpreter.local.NodeJsLocalInterpreter
+import com.intellij.lang.typescript.tsconfig.TypeScriptConfigService
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.ApplicationManager
@@ -12,6 +13,7 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.extensions.PluginAware
 import com.intellij.openapi.extensions.PluginDescriptor
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.openapi.roots.ProjectRootManager
 import com.intellij.openapi.util.Key
 import com.intellij.openapi.vfs.VirtualFile
@@ -39,14 +41,30 @@ class CrossBreezeLspIntegrationProvider : LspIntegrationProvider, PluginAware {
         project.getUserData(KEY) ?: CrossBreezeDescriptor(project, pluginRoot).also { project.putUserData(KEY, it) }
     }
     override fun fileOpened(project: Project, file: VirtualFile, clientStarter: LspIntegrationProvider.LspClientStarter) {
-        if (file.extension != "xcss" || !project.service<CrossBreezeSettings>().state.enabled) return
+        if (!project.service<CrossBreezeSettings>().state.enabled) return
+        if (file.extension != "xcss" && (file.extension !in typescriptExtensions || !isProjectSource(project, file))) return
         clientStarter.ensureClientStarted(descriptorFor(project))
     }
     companion object { private val KEY = Key.create<CrossBreezeDescriptor>("CrossBreeze.descriptor") }
 }
+private val typescriptExtensions = setOf("ts", "tsx", "mts", "cts")
+
+private fun isProjectSource(project: Project, file: VirtualFile): Boolean {
+    if (file.isDirectory || file.fileSystem.protocol != "file") return false
+    val index = ProjectFileIndex.getInstance(project)
+    return index.isInContent(file) && !index.isExcluded(file)
+}
+
 internal class CrossBreezeDescriptor(project: Project, private val root: Path) : ProjectWideLspClientDescriptor(project, "CrossBreeze") {
-    override fun isSupportedFile(file: VirtualFile) = file.extension == "xcss" && project.service<CrossBreezeSettings>().state.enabled
-    override fun getLanguageId(file: VirtualFile) = "xcss"
+    override fun isSupportedFile(file: VirtualFile) = project.service<CrossBreezeSettings>().state.enabled &&
+        (file.extension == "xcss" || (file.extension in typescriptExtensions || file.extension == "json") && isProjectSource(project, file))
+
+    override fun getLanguageId(file: VirtualFile) = when (file.extension) {
+        "tsx" -> "typescriptreact"
+        "ts", "mts", "cts" -> "typescript"
+        "json" -> "json"
+        else -> "xcss"
+    }
     override fun createCommandLine(): GeneralCommandLine {
         val interpreter = NodeJsInterpreterManager.getInstance(project).interpreter
         val local = interpreter as? NodeJsLocalInterpreter ?: throw unavailable("Configure a local Node.js runtime in Languages & Frameworks → JavaScript Runtime. Remote, WSL, and Docker runtimes are not supported yet.")
@@ -78,6 +96,14 @@ internal class CrossBreezeDescriptor(project: Project, private val root: Path) :
             .map { WorkspaceFolder(it.toNioPath().toUri().toString(), it.name) }
     }
     override fun getWorkspaceConfiguration(item: ConfigurationItem): Any? {
+        if (item.section == "crossbreeze.typescriptProject") {
+            return ReadAction.computeBlocking<String?, RuntimeException> {
+                val file = item.scopeUri?.let { findFileByUri(it) } ?: return@computeBlocking null
+                if (file.extension !in typescriptExtensions || !isProjectSource(project, file)) return@computeBlocking null
+                val config = project.service<TypeScriptConfigService>().getPreferableOrParentConfig(file)
+                config?.takeUnless { it.isJSConfig }?.configFile?.toNioPath()?.toUri()?.toString()
+            }
+        }
         if (item.section != "crossbreeze.formatting") return null
         return ReadAction.computeBlocking<Any?, RuntimeException> {
             val file = item.scopeUri?.let { findFileByUri(it) } ?: return@computeBlocking null

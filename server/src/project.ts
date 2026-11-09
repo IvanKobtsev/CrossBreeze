@@ -7,6 +7,7 @@ import { LanguageService, inspect } from '@cross-css/native'
 import { inspectValues } from './css-values.js'
 import { languageServiceCapabilities } from '@cross-css/native'
 import { validateCss, type CssValidationOptions } from './css-validation.js'
+import { TypescriptProjects, type TypescriptTarget } from './typescript-projects.js'
 
 export const excluded = new Set(['.git', '.idea', 'node_modules', 'dist', 'target', 'build', 'coverage'])
 export function isExcludedPath(path: string, roots: string[], excludedRoots: string[] = []): boolean {
@@ -39,7 +40,8 @@ interface Entry { text: string; revision: number }
 export class Project {
   readonly service = new LanguageService()
   readonly files = new Map<string, Entry>()
-  readonly open = new Map<string, { text: string; version: number }>()
+  readonly open = new Map<string, { text: string; version: number; uri: string }>()
+  private readonly typescript: TypescriptProjects
   private revisions = new Map<string, number>()
   private configurations = new Map<string, Paths>()
   private requestedPaths = new Set<string>()
@@ -48,6 +50,7 @@ export class Project {
     this.roots = roots.map(root => fileURLToPath(canonicalUri(pathToFileURL(root).href)))
     this.excludedRoots = excludedRoots.map(root => fileURLToPath(canonicalUri(pathToFileURL(root).href)))
     this.aliases = this.validAliases(aliases)
+    this.typescript = new TypescriptProjects(this.roots, path => isExcludedPath(path, this.roots, this.excludedRoots), canonicalUri, onWarning)
   }
   private revision(uri: string) {
     const revision = (this.revisions.get(uri) ?? 0) + 1
@@ -86,10 +89,14 @@ export class Project {
     }
   }
   initialize() { for (const root of this.roots) this.scan(root); this.bind() }
-  update(uri: string, text: string, version: number) {
+  update(uri: string, text: string, version: number, stylesheet = true, editorUri = uri) {
     uri = canonicalUri(uri)
     if ((this.open.get(uri)?.version ?? -1) >= version) return
-    this.open.set(uri, { text, version })
+    this.open.set(uri, { text, version, uri: editorUri })
+    if (!stylesheet) {
+      if (uri.endsWith('.json')) { this.configurations.clear(); this.bind() }
+      return
+    }
     if (this.inside(uri) || this.files.has(uri)) { this.set(uri, text); this.bind() }
     else {
       let service = this.isolated.get(uri)
@@ -97,9 +104,13 @@ export class Project {
       service.setFile(uri, this.revision(uri), text)
     }
   }
-  close(uri: string) {
+  close(uri: string, stylesheet = true) {
     uri = canonicalUri(uri)
     this.open.delete(uri)
+    if (!stylesheet) {
+      if (uri.endsWith('.json')) { this.configurations.clear(); this.bind() }
+      return
+    }
     if (this.isolated.delete(uri)) return
     this.disk(uri)
     this.bind()
@@ -108,17 +119,27 @@ export class Project {
     uri = canonicalUri(uri)
     if (!uri.startsWith('file:')) return
     const path = fileURLToPath(uri)
+    this.typescript.invalidateDisk()
     const excludedPath = isExcludedPath(path, this.roots, this.excludedRoots)
     if (excludedPath && !this.files.has(uri) && !this.requestedPaths.has(path)) return
     if (/^(tsconfig|jsconfig).*\.json$/.test(path.split(/[\\/]/).at(-1) ?? '') || this.configurations.has(path)) {
       this.configurations.clear()
-    } else if (path.endsWith('.xcss') && !this.open.has(uri)) this.disk(uri)
+    } else if (path.endsWith('.xcss')) {
+      if (!this.open.has(uri)) this.disk(uri)
+    } else return
     this.bind()
   }
   configure(aliases: Aliases) { this.aliases = this.validAliases(aliases); this.configurations.clear(); this.bind() }
   watchPaths() {
     return [...this.files.keys()].filter(uri => uri.startsWith('file:')).map(uri => fileURLToPath(uri))
       .concat([...this.configurations.keys()], [...this.requestedPaths])
+  }
+  typescriptWatchPaths() { return this.typescript.watchPaths() }
+  typescriptDiagnostics(targets: TypescriptTarget[]) {
+    return this.typescript.diagnostics(targets, this.open, this.files, (uri, specifier) => this.resolve(uri, specifier))
+  }
+  diagnostics(uri: string) {
+    return (this.isolated.get(uri) ?? this.service).document(uri).diagnostics
   }
   cssDiagnostics(uri: string, options: CssValidationOptions) {
     if (!options.checkCssProperties && !options.checkCssValues) return []
@@ -143,7 +164,8 @@ export class Project {
     let data: { extends?: string | string[]; compilerOptions?: { baseUrl?: string; paths?: Aliases } } = {}
     try {
       const errors: ParseError[] = []
-      data = parse(readFileSync(path, 'utf8'), errors, { allowTrailingComma: true }) ?? {}
+      const overlay = this.open.get(canonicalUri(pathToFileURL(path).href))
+      data = parse(overlay?.text ?? readFileSync(path, 'utf8'), errors, { allowTrailingComma: true }) ?? {}
       if (errors.length) this.onWarning(`Invalid JSON configuration: ${path}`)
     } catch { this.onWarning(`Cannot read configuration: ${path}`) }
     let inherited: Paths = { base: dirname(path), paths: {} }
@@ -172,7 +194,7 @@ export class Project {
     while (true) {
       for (const name of ['tsconfig.json', 'jsconfig.json']) {
         const config = join(directory, name)
-        if (existsSync(config)) return this.config(config)
+        if (this.open.has(canonicalUri(pathToFileURL(config).href)) || existsSync(config)) return this.config(config)
       }
       const parent = dirname(directory)
       if (parent === directory) return { base: dirname(path), paths: {} }

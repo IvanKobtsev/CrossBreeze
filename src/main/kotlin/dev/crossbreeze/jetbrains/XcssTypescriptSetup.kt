@@ -83,13 +83,15 @@ internal class XcssTypescriptSetupRefresh(private val project: Project) {
 }
 
 internal object XcssTypescriptSetup {
-    const val CLIENT = "@cross-css/vite-plugin/client"
-    const val CONTENT = "/// <reference types=\"@cross-css/vite-plugin/client\" />\n"
-    data class Plan(val config: TypeScriptConfig, val directory: VirtualFile, val name: String, val existing: VirtualFile? = null) {
+    const val CLIENT = "@cross-css/vite/client"
+    private val clients = listOf(CLIENT, "@cross-css/vite-plugin/client")
+    const val CONTENT = "/// <reference types=\"$CLIENT\" />\n"
+    data class Plan(val config: TypeScriptConfig, val directory: VirtualFile, val name: String, val client: String, val existing: VirtualFile? = null) {
+        val content get() = "/// <reference types=\"$client\" />\n"
         val dismissalKey get() = "crossbreeze.typescript.setup.dismissed.${config.configFile.url}"
     }
-    private val clientReference = Regex("""(?m)^\s*///\s*<reference\s+types\s*=\s*["']@cross-css/vite-plugin/client["']""")
-    private val clientImport = Regex("""\bimport\s*["']@cross-css/vite-plugin/client["']""")
+    private val clientReference = Regex("""(?m)^\s*///\s*<reference\s+types\s*=\s*["'](@cross-css/vite(?:-plugin)?/client)["']""")
+    private val clientImport = Regex("""\bimport\s*["'](@cross-css/vite(?:-plugin)?/client)["']""")
     private val moduleDeclaration = Regex("""\bdeclare\s+module\s*["']\*\.xcss["']""")
     private val xcssImport = Regex("""\b(?:from\s*|import\s*(?:\(\s*)?)["'][^"'\r\n]+\.xcss["']""")
 
@@ -105,33 +107,39 @@ internal object XcssTypescriptSetup {
         val directory = config.rootDirFile?.takeIf { it.isDirectory && VfsUtil.isAncestor(root, it, false) }
             ?: root.findChild("src")?.takeIf { it.isDirectory }
             ?: root
+        val availableClients = findClients(root)
+        val client = availableClients.firstOrNull() ?: return null
         val names = listOf("xcss-env.d.ts", "crossbreeze-xcss-env.d.ts")
-        val existing = names.mapNotNull { directory.findChild(it) }.firstOrNull { !it.isDirectory && declaresXcss(text(it)) }
+        val existing = names.mapNotNull { directory.findChild(it) }.firstOrNull { !it.isDirectory && declaresXcss(text(it), availableClients) }
         val name = existing?.name ?: names.firstOrNull { directory.findChild(it) == null } ?: return null
-        val plan = Plan(config, directory, name, existing)
+        val plan = Plan(config, directory, name, client, existing)
         if (PropertiesComponent.getInstance(project).getBoolean(plan.dismissalKey)) return null
-        if (!directory.isWritable || !hasClient(root) || configured(project, config, directory)) return null
+        if (!directory.isWritable || configured(project, config, directory, availableClients)) return null
         return plan
     }
 
-    private fun configured(project: Project, config: TypeScriptConfig, directory: VirtualFile): Boolean {
-        if (config.types.contains(CLIENT)) return true
+    private fun configured(project: Project, config: TypeScriptConfig, directory: VirtualFile, availableClients: List<String>): Boolean {
+        if (config.types.any { it in availableClients }) return true
         val candidates = FilenameIndex.getAllFilesByExt(project, "ts", GlobalSearchScope.projectScope(project)) + directory.children.toList()
         return candidates.any { file ->
-            !file.isDirectory && file.name.endsWith(".d.ts") && config.isIncludedFile(file, false) && declaresXcss(text(file))
+            !file.isDirectory && file.name.endsWith(".d.ts") && config.isIncludedFile(file, false) && declaresXcss(text(file), availableClients)
         }
     }
 
-    internal fun declaresXcss(source: String): Boolean = clientReference.containsMatchIn(source) ||
-        clientImport.containsMatchIn(source) || moduleDeclaration.containsMatchIn(source)
+    internal fun declaresXcss(source: String, availableClients: List<String> = clients): Boolean =
+        moduleDeclaration.containsMatchIn(source) ||
+            clientReference.findAll(source).any { it.groupValues[1] in availableClients } ||
+            clientImport.findAll(source).any { it.groupValues[1] in availableClients }
 
-    private fun hasClient(root: VirtualFile): Boolean {
+    private fun findClients(root: VirtualFile): List<String> {
+        val available = linkedSetOf<String>()
         var directory: VirtualFile? = root
         while (directory != null) {
-            if (directory.findFileByRelativePath("node_modules/@cross-css/vite-plugin/client.d.ts") != null) return true
-            directory = directory.parent
+            val current = directory
+            available += clients.filter { current.findFileByRelativePath("node_modules/$it.d.ts") != null }
+            directory = current.parent
         }
-        return false
+        return available.toList()
     }
 
     private fun text(file: VirtualFile): String = FileDocumentManager.getInstance().getCachedDocument(file)?.text
@@ -142,7 +150,7 @@ internal object XcssTypescriptSetup {
         var created: VirtualFile? = null
         WriteCommandAction.runWriteCommandAction(project, "Add XCSS TypeScript declarations", null, Runnable {
             if (!plan.directory.isValid || plan.directory.findChild(plan.name) != null) return@Runnable
-            created = plan.directory.createChildData(this, plan.name).also { VfsUtil.saveText(it, CONTENT) }
+            created = plan.directory.createChildData(this, plan.name).also { VfsUtil.saveText(it, plan.content) }
         })
         return created
     }

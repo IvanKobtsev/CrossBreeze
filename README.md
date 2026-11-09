@@ -22,7 +22,7 @@ installable ZIP on pushes, pull requests, and manual runs; artifacts expire afte
 ## Project behavior
 
 CrossBreeze indexes XCSS in project content roots and follows explicit XCSS imports.
-It ignores `.git`, `.idea`, `node_modules`, `dist`, `target`, `build`, `coverage`,
+The stylesheet scan skips `.git`, `.idea`, `node_modules`, `dist`, `target`, `build`, `coverage`,
 symlinked directory trees, and IDE excluded roots. Open unsaved documents override
 disk contents. Files outside project roots are analyzed in isolation.
 
@@ -66,7 +66,7 @@ provided.
 The **Selectors** color group provides separate styles for classes, IDs, tags,
 attribute names, pseudo-classes, pseudo-elements, universal selectors, nesting,
 combinators, and namespace prefixes. Full selector classification uses XCSS
-language-service API v4, included through the pinned 0.7.1 engine. Specificity is
+language-service API v4, included through the pinned 0.8.1 engine. Specificity is
 calculated by XCSS's selector API; editor specificity hints and warnings are not
 enabled in this release.
 
@@ -74,12 +74,20 @@ Navigation currently covers XCSS files. Completion, rename, style lint rules, fi
 JS/TS `styles.button` navigation, remote Node runtimes, and CSS generation in the
 editor are outside this first release.
 
+### Inline XCSS diagnostics
+
+WebStorm underlines XCSS analyzer errors in open stylesheets and in TypeScript
+files covered by a project configuration. Hover over a highlight to see its
+stable `XC-*` code and explanation. TypeScript diagnostics cover unknown
+classes and variant groups, invalid variant values, and unresolved XCSS
+imports. Unsaved stylesheet and TypeScript edits refresh the highlights.
+
 ### TypeScript declaration setup
 
 When an XCSS file or a TypeScript file importing XCSS is opened, CrossBreeze
 shows an editor banner if its TypeScript project is missing XCSS declarations.
 Choose **Add declarations** to create and open `xcss-env.d.ts` with a reference
-to `@cross-css/vite-plugin/client`. The file is placed in the configured source
+to `@cross-css/vite/client`. The file is placed in the configured source
 root, otherwise `src` when present, otherwise beside the TS configuration.
 The Vite plugin's client declaration must already be installed in the project.
 
@@ -151,7 +159,7 @@ sandbox. Open a multi-file XCSS project, check diagnostics, Ctrl/Cmd-click an
 injection or variable, find references, inspect hover, and edit an unsaved document
 to verify live highlighting and diagnostics. Configure Node inside the sandbox.
 
-CrossBreeze pins **@cross-css/native 0.7.1 from npm**, including package-lock
+CrossBreeze pins **@cross-css/native 0.8.1 from npm**, including package-lock
 integrity. Packaging fetches all eight locked native tarballs, verifies SHA-512
 integrity, includes licenses, and records per-file hashes. There are no sibling
 XCSS checkout, Git dependency, local tarball, or development-binary fallbacks.

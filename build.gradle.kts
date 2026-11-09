@@ -40,6 +40,9 @@ abstract class VerifyPluginArchive : DefaultTask() {
         val entries = ZipFile(archive.get().asFile).use { zip -> zip.entries().asSequence().map { it.name }.toSet() }
         check(entries.any { it.endsWith("/server/index.cjs") }) { "Missing language server" }
         check(entries.any { it.endsWith("/server/worker.cjs") }) { "Missing analysis worker" }
+        for (file in listOf("platform.cjs", "TSRS-LICENSE", "TSRS-NOTICE")) {
+            check(entries.any { it.endsWith("/server/node_modules/@cross-css/native/$file") }) { "Missing native package file: $file" }
+        }
         for (target in listOf("darwin-arm64", "darwin-x64", "win32-arm64-msvc", "win32-x64-msvc", "linux-arm64-gnu", "linux-x64-gnu", "linux-arm64-musl", "linux-x64-musl")) {
             check(entries.any { it.endsWith("/server/node_modules/@cross-css/native-$target/xcss.node") }) { "Missing native binary: $target" }
         }

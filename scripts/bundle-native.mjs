@@ -28,10 +28,15 @@ try {
     const target = join(destination, 'node_modules', name)
     await mkdir(target, { recursive: true })
     const listing = execFileSync('tar', ['-tzf', archive], { encoding: 'utf8' }).trim().split(/\r?\n/)
-    const allowed = name === '@cross-css/native' ? ['package.json', 'index.js', 'index.d.ts', 'LICENSE', 'README.md'] : ['package.json', 'xcss.node', 'LICENSE', 'README.md']
+    const allowed = name === '@cross-css/native'
+      ? ['package.json', 'index.js', 'index.d.ts', 'platform.cjs', 'LICENSE', 'README.md', 'TSRS-LICENSE', 'TSRS-NOTICE']
+      : ['package.json', 'xcss.node', 'LICENSE', 'README.md']
     const files = allowed.filter(file => listing.includes(`package/${file}`))
     assert(files.includes('package.json') && files.includes('LICENSE'))
     assert(files.includes(name === '@cross-css/native' ? 'index.js' : 'xcss.node'))
+    if (name === '@cross-css/native') {
+      for (const file of ['platform.cjs', 'TSRS-LICENSE', 'TSRS-NOTICE']) assert(files.includes(file), `Missing ${file}`)
+    }
     execFileSync('tar', ['-xzf', archive, '-C', target, '--strip-components=1', ...files.map(file => `package/${file}`)])
     assert.equal(JSON.parse(await readFile(join(target, 'package.json'), 'utf8')).version, version)
     const hashes = {}
