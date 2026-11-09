@@ -19,6 +19,13 @@ parentPort!.on('message', ({ id, method, args }) => {
       result = project.typescriptDiagnostics(args[0])
       parentPort!.postMessage({ typescriptWatchPaths: project.typescriptWatchPaths() })
     }
+    else if (method === 'typescriptSources') result = project.typescriptSources()
+    else if (method === 'typescriptQuery' || method === 'editorReferences') {
+      result = method === 'typescriptQuery'
+        ? project.typescriptQuery(args[0], args[1], args[2])
+        : project.editorReferences(args[0], args[1], args[2])
+      parentPort!.postMessage({ typescriptWatchPaths: project.typescriptWatchPaths() })
+    }
     else if (method === 'cssDiagnostics') result = project.cssDiagnostics(args[0], args[1])
     else if (method === 'close') project.close(args[0], args[1])
     else if (method === 'change') project.change(args[0])

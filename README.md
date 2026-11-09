@@ -68,14 +68,21 @@ provided.
 
 The **Selectors** color group provides separate styles for classes, IDs, tags,
 attribute names, pseudo-classes, pseudo-elements, universal selectors, nesting,
-combinators, and namespace prefixes. Full selector classification uses XCSS
-language-service API v4, included through the pinned 0.8.1 engine. Specificity is
+combinators, and namespace prefixes. Full selector classification uses the XCSS
+language-service selector API. Specificity is
 calculated by XCSS's selector API; editor specificity hints and warnings are not
 enabled in this release.
 
-Navigation currently covers XCSS files. Completion, rename, style lint rules, fixes,
-JS/TS `styles.button` navigation, remote Node runtimes, and CSS generation in the
-editor are outside this first release.
+Ctrl/Cmd-click and **Go to Declaration** follow `styles.button`
+to its selector, `Variants<"Button">` to the group name, and a typed value such
+as `variant="primary"` to its member in the `@variants` list. **Show Usages**
+works from those references and their stylesheet declarations. Variant members
+have separate usages for each group, even when they use the same class.
+
+Completion uses the same module and group information. It suggests styles-map
+keys, group names, contextual variant values, and class names inside
+`@variants` and `composes`. TypeScript features use the file's project
+configuration, and usages include matching files that are closed in the editor.
 
 ### Inline XCSS diagnostics
 
@@ -164,7 +171,7 @@ sandbox. Open a multi-file XCSS project, check diagnostics, Ctrl/Cmd-click an
 injection or variable, find references, inspect hover, and edit an unsaved document
 to verify live highlighting and diagnostics. Configure Node inside the sandbox.
 
-CrossBreeze pins **@cross-css/native 0.8.1 from npm**, including package-lock
+CrossBreeze pins **@cross-css/native 0.9.0 from npm**, including package-lock
 integrity. Packaging fetches the locked tarballs for each target, verifies SHA-512
 integrity, includes licenses, and records per-file hashes. The npm bundle smoke
 test loads the target matching the current Node runtime.

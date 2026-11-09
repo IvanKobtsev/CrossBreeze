@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { LanguageService, inspect, type EditorDiagnostic, type EditorLocation } from '@cross-css/native'
+import { LanguageService, inspect, type EditorDiagnostic, type EditorExportedSymbol, type EditorLocation, type EditorPosition } from '@cross-css/native'
 import { parse } from 'jsonc-parser'
 
 export const typescriptFile = /\.(?:ts|tsx|mts|cts)$/
@@ -27,6 +27,9 @@ function nearestConfig(path: string, roots: string[]) {
 }
 
 interface Input { uri: string; text: string; style: boolean }
+type OpenInputs = ReadonlyMap<string, { text: string; uri: string }>
+type StyleInputs = ReadonlyMap<string, { text: string }>
+type ResolveImport = (uri: string, specifier: string) => string | undefined
 interface Inventory {
   files: Map<string, Input>
   watch: Set<string>
@@ -91,19 +94,45 @@ class Checker {
 
   warning() { return this.service.typescriptProjectWarning() }
 
+  private location(value: EditorLocation): EditorLocation {
+    return { ...value, uri: this.inputs.get(value.uri)?.uri ?? pathToFileURL(join(this.anchor!, value.uri)).href }
+  }
+
   diagnostics(id: string): EditorDiagnostic[] {
-    const location = (value: EditorLocation): EditorLocation => ({
-      ...value, uri: this.inputs.get(value.uri)?.uri ?? pathToFileURL(join(this.anchor!, value.uri)).href,
-    })
     return this.service.document(id).diagnostics.map(diagnostic => ({
-      ...diagnostic, location: location(diagnostic.location), related: diagnostic.related.map(location),
+      ...diagnostic, location: this.location(diagnostic.location), related: diagnostic.related.map(value => this.location(value)),
     }))
+  }
+
+  definition(id: string, position: EditorPosition) {
+    return this.service.definition(id, position).map(value => this.location(value))
+  }
+
+  completion(id: string, position: EditorPosition) {
+    return this.service.completion(id, position)
+  }
+
+  symbols(id: string, position: EditorPosition) {
+    return this.service.symbolsAt(id, position)
+      .flatMap(symbol => {
+        const input = this.inputs.get(symbol.module)
+        return input ? [{ ...symbol, module: input.uri }] : []
+      })
+  }
+
+  references(symbols: EditorExportedSymbol[], preferred: Map<string, string>, includeDeclaration: boolean) {
+    const local = symbols.flatMap(symbol => {
+      const module = preferred.get(symbol.module)
+      return module ? [{ ...symbol, module }] : []
+    })
+    return this.service.referencesForSymbols(local, includeDeclaration).map(value => this.location(value))
   }
 }
 
 export class TypescriptProjects {
   private checkers = new Map<string, Checker>()
   private warnings = new Set<string>()
+  private sourceUris?: string[]
 
   constructor(
     private readonly roots: string[],
@@ -113,7 +142,35 @@ export class TypescriptProjects {
   ) {}
 
   invalidateDisk() {
+    this.sourceUris = undefined
     for (const checker of this.checkers.values()) checker.inventory = undefined
+  }
+
+  sources(open: OpenInputs) {
+    if (!this.sourceUris) {
+      const sources: string[] = []
+      const scan = (dir: string) => {
+        if (this.skip(dir)) return
+        let entries
+        try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
+        for (const entry of entries) {
+          const path = join(dir, entry.name)
+          if (entry.isDirectory()) scan(path)
+          else if (entry.isFile() && typescriptFile.test(path) && !this.skip(path)) {
+            sources.push(this.canonical(pathToFileURL(path).href))
+          }
+        }
+      }
+      for (const root of this.roots) scan(root)
+      this.sourceUris = sources
+    }
+    const sources = new Set(this.sourceUris)
+    for (const uri of open.keys()) {
+      if (!uri.startsWith('file:')) continue
+      const path = fileURLToPath(uri)
+      if (typescriptFile.test(path) && this.roots.some(root => contains(root, path)) && !this.skip(path)) sources.add(uri)
+    }
+    return [...sources]
   }
 
   watchPaths() {
@@ -207,13 +264,7 @@ export class TypescriptProjects {
     }
   }
 
-  diagnostics(
-    targets: TypescriptTarget[],
-    open: ReadonlyMap<string, { text: string; uri: string }>,
-    styles: ReadonlyMap<string, { text: string }>,
-    resolveImport: (uri: string, specifier: string) => string | undefined,
-  ) {
-    const results = new Map<string, EditorDiagnostic[]>()
+  private groups(targets: TypescriptTarget[]) {
     const groups = new Map<string, { config: string; targets: TypescriptTarget[] }>()
     for (const target of targets) {
       if (!target.uri.startsWith('file:')) continue
@@ -221,36 +272,78 @@ export class TypescriptProjects {
         : target.config?.startsWith('file:') ? fileURLToPath(target.config) : undefined
       if (!config) continue
       const key = this.canonical(pathToFileURL(config).href)
-      const group = groups.get(key) ?? { config, targets: [] }
+      const group = groups.get(key) ?? { config: fileURLToPath(key), targets: [] }
       group.targets.push(target)
       groups.set(key, group)
     }
+    return groups
+  }
+
+  private prepare(key: string, config: string, open: OpenInputs, styles: StyleInputs, resolveImport: ResolveImport) {
+    let checker = this.checkers.get(key)
+    if (!checker) this.checkers.set(key, checker = new Checker())
+    checker.inventory ??= this.inventory(config)
+    const files = new Map<string, Input>()
+    const known = new Set<string>()
+    for (const [path, input] of checker.inventory.files) {
+      const overlay = open.get(input.uri)
+      files.set(path, overlay ? { ...input, text: overlay.text } : input)
+      known.add(input.uri)
+    }
+    for (const [uri, input] of styles) {
+      if (!uri.startsWith('file:') || known.has(uri)) continue
+      const path = fileURLToPath(uri)
+      files.set(path, { uri, text: input.text, style: true })
+      known.add(uri)
+    }
+    for (const [uri, input] of open) {
+      if (!uri.startsWith('file:') || known.has(uri)) continue
+      const path = fileURLToPath(uri)
+      if (typescriptInput.test(path)) files.set(path, { uri, text: input.text, style: path.endsWith('.xcss') })
+    }
+    this.includeRelativeConfigs(config, files, checker.inventory.watch)
+    return { checker, preferred: checker.update(config, files, resolveImport) }
+  }
+
+  query(method: 'definition' | 'completion' | 'symbols', target: TypescriptTarget, position: EditorPosition,
+    open: OpenInputs, styles: StyleInputs, resolveImport: ResolveImport) {
+    for (const [key, { config }] of this.groups([target])) {
+      try {
+        const { checker, preferred } = this.prepare(key, config, open, styles, resolveImport)
+        const id = preferred.get(target.uri)
+        if (id) return checker[method](id, position)
+      } catch (error) {
+        this.checkers.delete(key)
+        this.report(key, String(error))
+      }
+    }
+    return []
+  }
+
+  references(symbols: EditorExportedSymbol[], targets: TypescriptTarget[], includeDeclaration: boolean,
+    open: OpenInputs, styles: StyleInputs, resolveImport: ResolveImport) {
+    const locations: EditorLocation[] = []
+    const groups = this.groups(targets)
     for (const key of this.checkers.keys()) if (!groups.has(key)) this.checkers.delete(key)
     for (const [key, { config, targets: group }] of groups) {
       try {
-        let checker = this.checkers.get(key)
-        if (!checker) this.checkers.set(key, checker = new Checker())
-        checker.inventory ??= this.inventory(config)
-        const files = new Map<string, Input>()
-        const known = new Set<string>()
-        for (const [path, input] of checker.inventory.files) {
-          const overlay = open.get(input.uri)
-          files.set(path, overlay ? { ...input, text: overlay.text } : input)
-          known.add(input.uri)
-        }
-        for (const [uri, input] of styles) {
-          if (!uri.startsWith('file:') || known.has(uri)) continue
-          const path = fileURLToPath(open.get(uri)?.uri ?? uri)
-          files.set(path, { uri, text: input.text, style: true })
-          known.add(uri)
-        }
-        for (const [uri, input] of open) {
-          if (!uri.startsWith('file:') || known.has(uri)) continue
-          const path = fileURLToPath(input.uri)
-          if (typescriptInput.test(path)) files.set(path, { uri, text: input.text, style: path.endsWith('.xcss') })
-        }
-        this.includeRelativeConfigs(config, files, checker.inventory.watch)
-        const preferred = checker.update(config, files, resolveImport)
+        const { checker, preferred } = this.prepare(key, config, open, styles, resolveImport)
+        const sources = new Set(group.map(target => target.uri))
+        locations.push(...checker.references(symbols, preferred, includeDeclaration)
+          .filter(value => !typescriptFile.test(value.uri) || sources.has(value.uri)))
+      } catch (error) {
+        this.checkers.delete(key)
+        this.report(key, String(error))
+      }
+    }
+    return locations
+  }
+
+  diagnostics(targets: TypescriptTarget[], open: OpenInputs, styles: StyleInputs, resolveImport: ResolveImport) {
+    const results = new Map<string, EditorDiagnostic[]>()
+    for (const [key, { config, targets: group }] of this.groups(targets)) {
+      try {
+        const { checker, preferred } = this.prepare(key, config, open, styles, resolveImport)
         const warning = checker.warning()
         if (warning) this.report(key, warning)
         else for (const { uri } of group) {

@@ -1,10 +1,10 @@
 import { Worker } from 'node:worker_threads'
 import { basename, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { createConnection, TextDocuments, TextDocumentSyncKind, ResponseError, LSPErrorCodes, ErrorCodes, DiagnosticSeverity, type CancellationToken, type Position, type InitializeParams } from 'vscode-languageserver/node.js'
+import { createConnection, TextDocuments, TextDocumentSyncKind, ResponseError, LSPErrorCodes, ErrorCodes, DiagnosticSeverity, CompletionItemKind, type CancellationToken, type Position, type InitializeParams } from 'vscode-languageserver/node.js'
 import { TextDocument } from 'vscode-languageserver-textdocument'
 import { watch, type FSWatcher } from 'chokidar'
-import { languageServiceCapabilities, type EditorDiagnostic, type EditorDocument, type EditorHover, type EditorLocation } from '@cross-css/native'
+import { languageServiceCapabilities, type EditorCompletion, type EditorDiagnostic, type EditorDocument, type EditorExportedSymbol, type EditorHover, type EditorLocation } from '@cross-css/native'
 import { canonicalUri, isExcludedPath, type Aliases } from './project.js'
 import { defaultCssValidation, type CssValidationOptions } from './css-validation.js'
 import { colorPresentation } from './css-values.js'
@@ -67,6 +67,16 @@ function scheduleDiagnostics() {
   clearTimeout(timer)
   timer = setTimeout(() => { void publish().catch(failed) }, 150)
 }
+async function typescriptTargets(uris: string[]): Promise<TypescriptTarget[]> {
+  const targets = uris.map(uri => ({ uri: canonicalUri(uri) }))
+  if (!workspaceConfiguration || !uris.length) return targets
+  const configs = await connection.workspace.getConfiguration(uris.map(scopeUri => ({
+    scopeUri, section: 'crossbreeze.typescriptProject',
+  }))).catch(error => { failed(error); return [] })
+  return targets.map((target, index) => ({
+    ...target, config: typeof configs[index] === 'string' ? configs[index] : null,
+  }))
+}
 async function publish() {
   const generation = epoch
   await ready
@@ -83,15 +93,7 @@ async function publish() {
     sendDiagnostics(document, diagnostics, cssDiagnostics)
   }
   const typescript = entries.filter(([, document]) => document.typescript)
-  let targets: TypescriptTarget[] = typescript.map(([uri]) => ({ uri }))
-  if (workspaceConfiguration && typescript.length) {
-    const configs = await connection.workspace.getConfiguration(typescript.map(([, document]) => ({
-      scopeUri: document.uri, section: 'crossbreeze.typescriptProject',
-    }))).catch(error => { failed(error); return [] })
-    targets = targets.map((target, index) => ({
-      ...target, config: typeof configs[index] === 'string' ? configs[index] : null,
-    }))
-  }
+  const targets = await typescriptTargets(typescript.map(([, document]) => document.uri))
   if (generation !== epoch || shutdown) return
   if (!typescript.length && !watchedTypescriptPaths.size) return
   const results = await call<Map<string, EditorDiagnostic[]>>('typescriptDiagnostics', targets).catch(error => {
@@ -155,6 +157,7 @@ connection.onInitialize((params: InitializeParams) => {
   const capabilities = languageServiceCapabilities()
   return { capabilities: { positionEncoding: 'utf-16', textDocumentSync: TextDocumentSyncKind.Incremental,
     definitionProvider: true, referencesProvider: true, hoverProvider: true, colorProvider: true,
+    completionProvider: { triggerCharacters: ['.', '"', "'", '<'] },
     documentFormattingProvider: typeof (native as unknown as FormattingBinding).formatSource === 'function',
     semanticTokensProvider: { legend: { tokenTypes: capabilities.tokenTypes, tokenModifiers: capabilities.tokenModifiers }, full: true },
   }, serverInfo: { name: 'CrossBreeze', version: '0.1.0' } }
@@ -196,18 +199,59 @@ connection.onDidChangeWatchedFiles(({ changes }) => {
   ready.catch(failed)
   scheduleDiagnostics()
 })
-async function query<T>(method: string, uri: string, token: CancellationToken, position?: Position, includeDeclaration?: boolean): Promise<T> {
+async function currentQuery<T>(token: CancellationToken, run: (check: () => void) => Promise<T>): Promise<T> {
   const generation = epoch
+  const check = () => {
+    if (token.isCancellationRequested) throw new ResponseError(LSPErrorCodes.RequestCancelled, 'Request canceled')
+    if (generation !== epoch) throw new ResponseError(LSPErrorCodes.ContentModified, 'Document changed during analysis')
+  }
   await ready
-  if (token.isCancellationRequested) throw new ResponseError(LSPErrorCodes.RequestCancelled, 'Request canceled')
-  const result = await call<T>(method, canonicalUri(uri), position, includeDeclaration)
-  if (token.isCancellationRequested) throw new ResponseError(LSPErrorCodes.RequestCancelled, 'Request canceled')
-  if (generation !== epoch) throw new ResponseError(LSPErrorCodes.ContentModified, 'Document changed during analysis')
+  check()
+  const result = await run(check)
+  check()
   return result
 }
-connection.onDefinition((params, token) => definitionLinks
-  ? query<DefinitionLink[]>('definitionLinks', params.textDocument.uri, token, params.position)
-  : query<EditorLocation[]>('definition', params.textDocument.uri, token, params.position))
+function query<T>(method: string, uri: string, token: CancellationToken, position?: Position, includeDeclaration?: boolean) {
+  return currentQuery(token, () => call<T>(method, canonicalUri(uri), position, includeDeclaration))
+}
+function isTypescript(uri: string) {
+  return uri.startsWith('file:') && typescriptFile.test(fileURLToPath(uri))
+}
+function editorUri(uri: string) {
+  return open.get(canonicalUri(uri))?.uri ?? uri
+}
+async function typescriptQuery<T>(method: string, uri: string, position: Position, check: () => void) {
+  const [target] = await typescriptTargets([editorUri(uri)])
+  check()
+  return call<T>('typescriptQuery', method, target, position)
+}
+connection.onDefinition(async (params, token) => {
+  const { textDocument: { uri }, position } = params
+  if (isTypescript(uri)) {
+    const locations = await currentQuery(token, check => typescriptQuery<EditorLocation[]>('definition', uri, position, check))
+    return definitionLinks
+      ? locations.map(({ uri, range }) => ({ targetUri: editorUri(uri), targetRange: range, targetSelectionRange: range }))
+      : locations.map(location => ({ ...location, uri: editorUri(location.uri) }))
+  }
+  if (definitionLinks) {
+    const links = await query<DefinitionLink[]>('definitionLinks', uri, token, position)
+    return links.map(link => ({ ...link, targetUri: editorUri(link.targetUri) }))
+  }
+  const locations = await query<EditorLocation[]>('definition', uri, token, position)
+  return locations.map(location => ({ ...location, uri: editorUri(location.uri) }))
+})
+connection.onCompletion((params, token) => currentQuery(token, async check => {
+  const { textDocument: { uri }, position } = params
+  const items = isTypescript(uri)
+    ? await typescriptQuery<EditorCompletion[]>('completion', uri, position, check)
+    : await call<EditorCompletion[]>('completion', canonicalUri(uri), position)
+  return items.map(item => ({
+    label: item.label,
+    kind: item.kind === 'class' ? CompletionItemKind.Class
+      : item.kind === 'variantGroup' ? CompletionItemKind.Enum : CompletionItemKind.EnumMember,
+    textEdit: { range: item.range, newText: item.newText },
+  }))
+}))
 connection.onDocumentColor((params, token) => query<ColorInformation[]>('colors', params.textDocument.uri, token))
 connection.onColorPresentation(async (params, token) => {
   const colors = await query<ColorInformation[]>('colors', params.textDocument.uri, token)
@@ -216,7 +260,34 @@ connection.onColorPresentation(async (params, token) => {
   if (!document || !colors.some(same)) return []
   return colorPresentation(document.getText(params.range), params.color, params.range)
 })
-connection.onReferences((params, token) => query<EditorLocation[]>('references', params.textDocument.uri, token, params.position, params.context.includeDeclaration))
+connection.onReferences((params, token) => currentQuery(token, async check => {
+  const { textDocument: { uri }, position, context: { includeDeclaration } } = params
+  const canonical = canonicalUri(uri)
+  const typescript = isTypescript(uri)
+  const locations = typescript ? [] : await call<EditorLocation[]>('references', canonical, position, includeDeclaration)
+  check()
+  const symbols = typescript
+    ? await typescriptQuery<EditorExportedSymbol[]>('symbols', uri, position, check)
+    : await call<EditorExportedSymbol[]>('symbols', canonical, position)
+  if (symbols.length) {
+    check()
+    const sources = await call<string[]>('typescriptSources')
+    const targets: TypescriptTarget[] = []
+    for (let offset = 0; offset < sources.length; offset += 128) {
+      check()
+      targets.push(...await typescriptTargets(sources.slice(offset, offset + 128)))
+    }
+    check()
+    locations.push(...await call<EditorLocation[]>('editorReferences', symbols, targets, includeDeclaration))
+  }
+  const unique = new Map<string, EditorLocation>()
+  for (const { uri, range } of locations) {
+    const { start, end } = range
+    const key = JSON.stringify([canonicalUri(uri), start.line, start.character, end.line, end.character])
+    unique.set(key, { uri: editorUri(uri), range })
+  }
+  return [...unique.values()]
+}))
 connection.onHover(async (params, token) => {
   const hover = await query<EditorHover | null>('hover', params.textDocument.uri, token, params.position)
   return hover ? { contents: { kind: 'plaintext' as const, value: hover.text }, range: hover.range } : null

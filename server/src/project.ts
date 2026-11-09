@@ -3,7 +3,7 @@ import { dirname, isAbsolute, join, resolve, relative, extname } from 'node:path
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 import { parse, type ParseError } from 'jsonc-parser'
-import { LanguageService, inspect } from '@cross-css/native'
+import { LanguageService, inspect, type EditorExportedSymbol, type EditorPosition } from '@cross-css/native'
 import { inspectValues } from './css-values.js'
 import { languageServiceCapabilities } from '@cross-css/native'
 import { validateCss, type CssValidationOptions } from './css-validation.js'
@@ -138,6 +138,15 @@ export class Project {
   typescriptDiagnostics(targets: TypescriptTarget[]) {
     return this.typescript.diagnostics(targets, this.open, this.files, (uri, specifier) => this.resolve(uri, specifier))
   }
+  typescriptSources() {
+    return this.typescript.sources(this.open).map(uri => this.open.get(uri)?.uri ?? uri)
+  }
+  typescriptQuery(method: 'definition' | 'completion' | 'symbols', target: TypescriptTarget, position: EditorPosition) {
+    return this.typescript.query(method, target, position, this.open, this.files, (uri, specifier) => this.resolve(uri, specifier))
+  }
+  editorReferences(symbols: EditorExportedSymbol[], targets: TypescriptTarget[], includeDeclaration: boolean) {
+    return this.typescript.references(symbols, targets, includeDeclaration, this.open, this.files, (uri, specifier) => this.resolve(uri, specifier))
+  }
   diagnostics(uri: string) {
     return (this.isolated.get(uri) ?? this.service).document(uri).diagnostics
   }
@@ -263,6 +272,8 @@ export class Project {
       }
       case 'definition': return service.definition(uri, position!)
       case 'references': return service.references(uri, position!, includeDeclaration)
+      case 'symbols': return service.symbolsAt(uri, position!)
+      case 'completion': return service.completion(uri, position!)
       case 'hover': return service.hover(uri, position!) ?? null
       default: throw new Error(`Unsupported query ${method}`)
     }
