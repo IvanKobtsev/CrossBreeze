@@ -40,10 +40,45 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: chmod +x gradlew
       - run: ./gradlew test verifyPlugin verifyPluginArchive --stacktrace
-      - name: Upload installable WebStorm plugin
+      - name: Upload Linux x86_64 plugin
         uses: actions/upload-artifact@v4
         with:
-          name: crossbreeze-webstorm-plugin
-          path: build/distributions/crossbreeze-*.zip
+          name: crossbreeze-linux-x86_64
+          path: build/distributions/crossbreeze-*-linux-x86_64.zip
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload Linux ARM64 plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: crossbreeze-linux-arm64
+          path: build/distributions/crossbreeze-*-linux-arm64.zip
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload macOS x86_64 plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: crossbreeze-mac-x86_64
+          path: build/distributions/crossbreeze-*-mac-x86_64.zip
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload macOS ARM64 plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: crossbreeze-mac-arm64
+          path: build/distributions/crossbreeze-*-mac-arm64.zip
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload Windows x86_64 plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: crossbreeze-windows-x86_64
+          path: build/distributions/crossbreeze-*-windows-x86_64.zip
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload Windows ARM64 plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: crossbreeze-windows-arm64
+          path: build/distributions/crossbreeze-*-windows-arm64.zip
           if-no-files-found: error
           retention-days: 30

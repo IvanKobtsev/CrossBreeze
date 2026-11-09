@@ -7,17 +7,20 @@ references, hover, lexical highlighting, semantic highlighting, and source forma
 
 1. Open [GitHub Actions](https://github.com/IvanKobtsev/CrossBreeze/actions/workflows/ci.yml)
    and select a successful CI run. You must be signed into GitHub to download artifacts.
-2. Download **crossbreeze-webstorm-plugin** from the run's Artifacts section.
-3. Extract GitHub's artifact archive. Keep the inner `crossbreeze-0.1.1.zip` intact.
+2. Download the artifact for your WebStorm installation's OS and CPU architecture.
+   For example, choose **crossbreeze-windows-x86_64** for 64-bit Intel or AMD
+   Windows, or **crossbreeze-mac-arm64** for an Apple Silicon installation.
+3. Extract GitHub's artifact archive. Keep the inner platform-specific plugin ZIP intact.
 4. In WebStorm, open **Settings → Plugins → gear → Install Plugin from Disk**,
    select that inner ZIP, and restart if prompted.
 5. Configure a **local Node.js runtime** under **Languages & Frameworks → JavaScript Runtime**.
-   Supported versions match XCSS: Node 20.19.x or 22.12 and newer supported majors.
+   Use Node 20.19.x or 22.12 and newer supported majors. Node and WebStorm must use
+   the same CPU architecture.
 
-The plugin includes its server and all eight XCSS native platforms. It does not
-download software or require an XCSS project dependency at runtime. CI builds an
-installable ZIP on pushes, pull requests, and manual runs; artifacts expire after
-30 days. Marketplace publication is not configured.
+Each plugin ZIP includes its server and the XCSS native binaries for its target.
+Linux ZIPs support both glibc and musl. The plugin works offline with the configured
+Node runtime. CI builds all six ZIPs on pushes, pull requests, and manual runs.
+Artifacts expire after 30 days.
 
 ## Project behavior
 
@@ -154,15 +157,17 @@ npm run verify:bundle
 ./gradlew test verifyPlugin verifyPluginArchive
 ```
 
-The installable ZIP is in `build/distributions`. `./gradlew runIde` opens a WebStorm
+The six installable ZIPs in `build/distributions` have OS and architecture suffixes.
+Use `./gradlew buildPluginVariants` to build them without running verification.
+`./gradlew runIde` opens a WebStorm
 sandbox. Open a multi-file XCSS project, check diagnostics, Ctrl/Cmd-click an
 injection or variable, find references, inspect hover, and edit an unsaved document
 to verify live highlighting and diagnostics. Configure Node inside the sandbox.
 
 CrossBreeze pins **@cross-css/native 0.8.1 from npm**, including package-lock
-integrity. Packaging fetches all eight locked native tarballs, verifies SHA-512
-integrity, includes licenses, and records per-file hashes. There are no sibling
-XCSS checkout, Git dependency, local tarball, or development-binary fallbacks.
+integrity. Packaging fetches the locked tarballs for each target, verifies SHA-512
+integrity, includes licenses, and records per-file hashes. The npm bundle smoke
+test loads the target matching the current Node runtime.
 
 The CI packaging and artifact layout follows LocaleBreeze's editor workflow,
 adapted to consume published XCSS packages rather than building engine binaries.
