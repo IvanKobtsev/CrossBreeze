@@ -120,3 +120,28 @@ test('moves an existing XCSS registration ahead of React and preserves other plu
   assert.equal((after.match(/\bcss\(\)/g) ?? []).length, 1)
 })
 
+test('recognizes Vite Plus lazy plugins and previews migration of the existing legacy registration', t => {
+  const { put, installed, run, apply } = fixture(t)
+  installed()
+  put('package.json', { dependencies: { react: '^19', 'vite-plus': '*', [dependency]: '*' } })
+  put('tsconfig.json', { files: [], references: [{ path: './tsconfig.app.json' }] })
+  put('tsconfig.app.json', { compilerOptions: { jsx: 'react-jsx', types: ['vite/client'] }, include: ['src'] })
+  put('src/app.tsx', 'export {}')
+  const vite = put('vite.config.ts', [
+    'import { defineConfig as config, lazyPlugins as lazy } from "vite-plus";',
+    'import xcss from "@cross-css/vite-plugin";',
+    'import react, { reactCompilerPreset } from "@vitejs/plugin-react";',
+    'import babel from "@rolldown/plugin-babel";',
+    'export default config({ fmt: {}, plugins: lazy(() => [xcss(), react(), babel({ presets: [reactCompilerPreset()] })]) });',
+  ].join('\n'))
+  const plan = run()
+  const after = plan.edits.find(edit => edit.path === vite).after
+  assert.match(after, /import xcss from "@cross-css\/vite"/)
+  assert.match(after, /lazy\(\(\) => \[xcss\(\{ tsconfig: "\.\/tsconfig\.app\.json" \}\), react\(\{ jsxImportSource: "@cross-css\/vite\/react" \}\), babel/)
+  assert.equal((after.match(/\bxcss\(/g) ?? []).length, 1)
+  assert(plan.steps.some(step => step.message.includes('tsconfig.app.json')))
+  assert(plan.steps.some(step => step.message.includes('jsxImportSource')))
+  apply(plan)
+  assert.deepEqual(run(), { edits: [], steps: [] })
+})
+

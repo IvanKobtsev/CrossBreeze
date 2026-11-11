@@ -4,6 +4,7 @@ import { existsSync, readFileSync, readSync } from 'node:fs'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
 
 const xcss = '@cross-css/vite'
+const legacyXcss = '@cross-css/vite-plugin'
 const client = xcss + '/client'
 const runtime = xcss + '/react'
 const viteConfigs = ['ts', 'js', 'mts', 'mjs', 'cts', 'cjs'].map(ext => 'vite.config.' + ext)
@@ -109,7 +110,7 @@ function addProperty(text: string, object: ts.ObjectLiteralExpression, value: st
   return insert(text, object.getStart() + 1, ' ' + value + (object.properties.length ? ', ' : ' '))
 }
 
-function viteEdit(path: string, source: string, config: string | undefined, react: boolean, oxc: boolean) {
+function viteEdit(path: string, source: string, config: string | undefined, react: boolean, oxc: boolean, notes: string[]) {
   let text = source
   function parseVite() {
     const file = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true)
@@ -117,21 +118,31 @@ function viteEdit(path: string, source: string, config: string | undefined, reac
       throw new Error('Fix the Vite config syntax before registering ' + xcss + '.')
     }
     const imports = new Map<string, string>()
+    const defaultImports = new Map<string, ts.ImportDeclaration>()
+    const defineConfig = new Set<string>()
+    const lazyPlugins = new Set<string>()
     const occupied = new Set<string>()
     function collectNames(node: ts.Node) {
       if (ts.isIdentifier(node)) occupied.add(node.text)
       ts.forEachChild(node, collectNames)
     }
     collectNames(file)
-    let defineConfig: string | undefined
     for (const statement of file.statements) {
       if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue
       const specifier = statement.moduleSpecifier.text
       const clause = statement.importClause
       if (!clause || clause.isTypeOnly) continue
-      if (clause.name) imports.set(clause.name.text, specifier)
-      if (specifier === 'vite' && clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
-        defineConfig = clause.namedBindings.elements.find(item => !item.isTypeOnly && (item.propertyName ?? item.name).text === 'defineConfig')?.name.text
+      if (clause.name) {
+        imports.set(clause.name.text, specifier)
+        defaultImports.set(clause.name.text, statement)
+      }
+      if ((specifier === 'vite' || specifier === 'vite-plus') && clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+        for (const item of clause.namedBindings.elements) {
+          if (item.isTypeOnly) continue
+          const name = (item.propertyName ?? item.name).text
+          if (name === 'defineConfig') defineConfig.add(item.name.text)
+          if (specifier === 'vite-plus' && name === 'lazyPlugins') lazyPlugins.add(item.name.text)
+        }
       }
     }
     const assignment = file.statements.find(ts.isExportAssignment)
@@ -139,15 +150,23 @@ function viteEdit(path: string, source: string, config: string | undefined, reac
     while (expression && (ts.isParenthesizedExpression(expression) || ts.isSatisfiesExpression(expression) || ts.isAsExpression(expression))) {
       expression = expression.expression
     }
-    if (expression && ts.isCallExpression(expression) && ts.isIdentifier(expression.expression) && expression.expression.text === defineConfig) {
+    if (expression && ts.isCallExpression(expression) && ts.isIdentifier(expression.expression) && defineConfig.has(expression.expression.text)) {
       expression = expression.arguments.length === 1 ? expression.arguments[0] : undefined
     }
     if (!expression || !ts.isObjectLiteralExpression(expression)) {
-      throw new Error('Register ' + xcss + ' in the exported Vite configuration manually. Its export is dynamic or uses an unsupported form.')
+      throw new Error('CrossBreeze could not verify the dynamic or unsupported Vite export. Check its XCSS plugin registration manually.')
     }
-    const plugins = property(expression, 'plugins')?.initializer
+    let plugins = property(expression, 'plugins')?.initializer
+    if (plugins && ts.isCallExpression(plugins) && ts.isIdentifier(plugins.expression) && lazyPlugins.has(plugins.expression.text)) {
+      const factory = plugins.arguments.length === 1 ? plugins.arguments[0] : undefined
+      if (factory && ts.isArrowFunction(factory) && !factory.parameters.length &&
+          !factory.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.AsyncKeyword) &&
+          ts.isArrayLiteralExpression(factory.body)) {
+        plugins = factory.body
+      }
+    }
     if (plugins && !ts.isArrayLiteralExpression(plugins)) {
-      throw new Error('Add ' + xcss + ' to the Vite plugins array manually. The plugin list is computed.')
+      throw new Error('CrossBreeze could not verify the computed Vite plugin list. Check its XCSS registration manually.')
     }
     if (plugins?.elements.some(item => !ts.isCallExpression(item) || !ts.isIdentifier(item.expression) || !imports.has(item.expression.text))) {
       throw new Error('Register ' + xcss + ' before JSX transforms in the Vite plugins array. The existing list contains entries that setup cannot resolve.')
@@ -156,10 +175,23 @@ function viteEdit(path: string, source: string, config: string | undefined, reac
     const from = (call: ts.CallExpression) => imports.get((call.expression as ts.Identifier).text)!
     const list = plugins?.getChildren(file).find(node => node.kind === ts.SyntaxKind.SyntaxList)
     const separatorAfter = (call: ts.CallExpression) => list?.getChildren(file).find(node => node.getStart(file) >= call.end)
-    return { file, object: expression, plugins, calls, from, imports, occupied, separatorAfter }
+    return { file, object: expression, plugins, calls, from, imports, defaultImports, occupied, separatorAfter }
   }
 
   let state = parseVite()
+  const legacy = state.calls.filter(call => state.from(call) === legacyXcss)
+  if (legacy.length) {
+    const call = legacy[0]
+    const declaration = state.defaultImports.get((call.expression as ts.Identifier).text)!
+    if (legacy.length !== 1 || state.calls.some(call => state.from(call) === xcss) ||
+        call.arguments.length || declaration.importClause?.namedBindings) {
+      throw new Error('Migrate the existing @cross-css/vite-plugin registration to @cross-css/vite manually before applying setup.')
+    }
+    const specifier = declaration.moduleSpecifier
+    text = text.slice(0, specifier.getStart() + 1) + xcss + text.slice(specifier.end - 1)
+    notes.push('Switch the existing XCSS plugin import to ' + xcss + ' to enable the JSX runtime.')
+    state = parseVite()
+  }
   const existing = state.calls.filter(call => state.from(call) === xcss)
   if (existing.length > 1) throw new Error('Keep a single ' + xcss + ' registration before applying setup.')
   if (existing.length) {
@@ -173,8 +205,11 @@ function viteEdit(path: string, source: string, config: string | undefined, reac
       if (option && (!ts.isStringLiteral(option.initializer) || resolve(dirname(path), option.initializer.text) !== resolve(dirname(path), config))) {
         throw new Error('Check the existing xcss() tsconfig option. The detected application config is ' + config + '.')
       }
-      if (!option) text = options ? addProperty(text, options, 'tsconfig: ' + JSON.stringify(config))
-        : insert(text, call.end - 1, '{ tsconfig: ' + JSON.stringify(config) + ' }')
+      if (!option) {
+        notes.push('Point xcss() at ' + config + '.')
+        text = options ? addProperty(text, options, 'tsconfig: ' + JSON.stringify(config))
+          : insert(text, call.end - 1, '{ tsconfig: ' + JSON.stringify(config) + ' }')
+      }
     }
     state = parseVite()
     const installed = state.calls.find(call => state.from(call) === xcss)!
@@ -203,6 +238,7 @@ function viteEdit(path: string, source: string, config: string | undefined, reac
       for (let suffix = 2; state.occupied.has(binding); suffix++) binding = 'xcss' + suffix
     }
     const call = binding + (config ? '({ tsconfig: ' + JSON.stringify(config) + ' })' : '()')
+    if (config) notes.push('Point xcss() at ' + config + '.')
     text = state.plugins
       ? insert(text, state.plugins.getStart() + 1, call + (state.calls.length ? ', ' : ''))
       : addProperty(text, state.object, 'plugins: [' + call + ']')
@@ -224,7 +260,10 @@ function viteEdit(path: string, source: string, config: string | undefined, reac
     if (transform.arguments.length > 1 || (options && !ts.isObjectLiteralExpression(options))) {
       throw new Error('Set jsxImportSource to ' + runtime + ' in the existing React plugin options.')
     }
-    if (!options) return insert(text, transform.end - 1, '{ jsxImportSource: ' + JSON.stringify(runtime) + ' }')
+    if (!options) {
+      notes.push('Set the React plugin’s jsxImportSource to ' + runtime + '.')
+      return insert(text, transform.end - 1, '{ jsxImportSource: ' + JSON.stringify(runtime) + ' }')
+    }
     const source = property(options, 'jsxImportSource')
     const mode = property(options, 'jsxRuntime')
     if ((source && (!ts.isStringLiteral(source.initializer) || !['react', runtime].includes(source.initializer.text))) ||
@@ -232,6 +271,7 @@ function viteEdit(path: string, source: string, config: string | undefined, reac
       throw new Error('Resolve the existing React JSX runtime options before switching to ' + runtime + '.')
     }
     if (source && ts.isStringLiteral(source.initializer) && source.initializer.text === runtime) return text
+    notes.push('Set the React plugin’s jsxImportSource to ' + runtime + '.')
     if (!source) return addProperty(text, options, 'jsxImportSource: ' + JSON.stringify(runtime))
     return text.slice(0, source.initializer.getStart()) + JSON.stringify(runtime) + text.slice(source.initializer.end)
   }
@@ -342,9 +382,18 @@ export function planSetup(input: Input): Plan | null {
   const explicitConfig = configPath && configPath !== tsRoot ? './' + relative(root, configPath).replaceAll('\\', '/') : undefined
   if (canSetRuntime) {
     try {
-      proposedVite = viteEdit(vitePath, viteSource, explicitConfig, react, Number(dependency(root, 'vite')?.data?.version?.split('.')[0]) >= 8)
+      const notes: string[] = []
+      proposedVite = viteEdit(vitePath, viteSource, explicitConfig, react, Number(dependency(root, 'vite')?.data?.version?.split('.')[0]) >= 8, notes)
+      for (const note of notes) step(note, vitePath)
     } catch (error) {
       step(error instanceof Error ? error.message : String(error), vitePath)
+      if (explicitConfig) step('Check that xcss() targets the application config with tsconfig: ' + JSON.stringify(explicitConfig) + '.', vitePath)
+      if (react) {
+        step('Check that the React transform uses jsxImportSource: ' + JSON.stringify(runtime) + ' (or the equivalent Oxc option).', vitePath)
+        if (config?.options.jsx !== ts.JsxEmit.ReactJSX || config.options.jsxImportSource !== runtime) {
+          step('Set compilerOptions.jsx to "react-jsx" and jsxImportSource to ' + JSON.stringify(runtime) + ' together with the Vite change.', configPath!)
+        }
+      }
     }
   } else {
     step('Resolve the configured JSX runtime and import source before switching to ' + runtime + '.', configPath!)

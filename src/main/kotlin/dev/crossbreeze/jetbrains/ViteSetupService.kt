@@ -51,6 +51,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.UIManager
+import javax.swing.Action
 
 internal class ViteSetupStartup : ProjectActivity, PluginAware {
     private lateinit var planner: Path
@@ -308,6 +310,8 @@ private class SetupDialog(private val project: Project, private val plan: ViteSe
 
     override fun createCenterPanel(): JComponent {
         val summary = JBTextArea(plan.steps.joinToString("\n\n") { it.message + "\n" + it.path }).apply {
+            font = UIManager.getFont("Label.font")
+            margin = com.intellij.util.ui.JBUI.insets(8)
             isEditable = false
             lineWrap = true
             wrapStyleWord = true
@@ -329,6 +333,9 @@ private class SetupDialog(private val project: Project, private val plan: ViteSe
             }
         }
     }
+
+    override fun createActions(): Array<Action> =
+        if (plan.edits.isEmpty()) arrayOf(okAction) else super.createActions()
 
     override fun doOKAction() {
         if (plan.edits.isEmpty()) close(CANCEL_EXIT_CODE) else super.doOKAction()
