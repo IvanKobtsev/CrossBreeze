@@ -159,15 +159,15 @@ test('TypeScript diagnostics use the selected project and live stylesheets', { t
   })
   writeFileSync(join(c.root, 'first/tsconfig.app.json'), configText)
   writeFileSync(join(c.root, 'first/theme.xcss'), '@variants V: .one; .one {}')
-  writeFileSync(join(c.root, 'second/tsconfig.json'), '{"compilerOptions":{"jsx":"preserve"},"files":["app.tsx"]}')
-  writeFileSync(join(c.root, 'second/theme.xcss'), '.other {}')
+  writeFileSync(join(c.root, 'second/tsconfig.json'), '{"compilerOptions":{"jsx":"react-jsx","jsxImportSource":"@cross-css/vite/react"},"files":["app.tsx"]}')
+  writeFileSync(join(c.root, 'second/theme.xcss'), '@vars { @provided --width: length; } .other {}')
   configs.set(app, config)
   configs.set(other, file('second/tsconfig.json'))
-  const bad = "/* 😀 */ import s, { type Variants } from '@styles/theme.xcss';\r\nimport missing from './absent.xcss';\r\nconst v: Variants<'V'> = 'two'; type W = Variants<'Wrong'>; s.missing;"
+  const bad = "/* 😀 */ import { styles as s, type Variants } from '@styles/theme.xcss';\r\nimport { styles as missing } from './absent.xcss';\r\nconst v: Variants<'V'> = 'two'; type W = Variants<'Wrong'>; s.missing;"
   let pending = c.diagnostic(app, 1, ds => ds.length === 4)
   const otherPending = c.diagnostic(other, 1, ds => ds.some(d => d.code === 'XC-001'))
   c.open(app, bad, 'typescript')
-  c.open(other, "import s from './theme.xcss'; s.missing;", 'typescriptreact')
+  c.open(other, "import { styles as s, cssVars } from './theme.xcss'; s.missing; <div xClass={'plain'} xVars={{ [cssVars.width]: '2%' }} />;", 'typescriptreact')
   const diagnostics = await pending
   assert.deepEqual(new Set(diagnostics.map(d => d.code)), new Set(['XC-001', 'XC-002', 'XC-003', 'XC-004']))
   assert(diagnostics.every(d => d.severity === 1 && d.source === 'XCSS'))
@@ -176,11 +176,11 @@ test('TypeScript diagnostics use the selected project and live stylesheets', { t
     start: { line: 2, character: lastLine.lastIndexOf('missing') },
     end: { line: 2, character: lastLine.length - 1 },
   })
-  await otherPending
+  assert.deepEqual(new Set((await otherPending).map(d => d.code)), new Set(['XC-001', 'XC-008', 'XC-009']))
 
   pending = c.diagnostic(app, 3, ds => ds.length === 2)
   c.edit(app, 2, '')
-  c.edit(app, 3, "import s, { type Variants } from '@styles/theme.xcss'; const v: Variants<'V'> = 'two'; s.missing;")
+  c.edit(app, 3, "import { styles as s, type Variants } from '@styles/theme.xcss'; const v: Variants<'V'> = 'two'; s.missing;")
   assert.deepEqual((await pending).map(d => d.code), ['XC-003', 'XC-001'])
   assert(!c.notifications.some(n => n.params?.uri === app && n.params.version === 2))
   pending = c.diagnostic(app, 3, ds => ds.length === 0)

@@ -1,6 +1,6 @@
 # CrossBreeze
 
-XCSS language support for WebStorm 2026.2+: diagnostics, go-to-definition, find
+XCSS language support for WebStorm 2026.3+: diagnostics, go-to-definition, find
 references, hover, lexical highlighting, semantic highlighting, and source formatting.
 
 ## Download and install
@@ -74,10 +74,18 @@ calculated by XCSS's selector API; editor specificity hints and warnings are not
 enabled in this release.
 
 Ctrl/Cmd-click and **Go to Declaration** follow `styles.button`
-to its selector, `Variants<"Button">` to the group name, and a typed value such
+to all its selectors, `cssVars.buttonWidth` to its `@provided` declaration,
+`Variants<"Button">` to the group name, and a typed value such
 as `variant="primary"` to its member in the `@variants` list. **Show Usages**
 works from those references and their stylesheet declarations. Variant members
 have separate usages for each group, even when they use the same class.
+
+Import the named exports with `import { styles, cssVars, type Variants } from "./button.xcss"`.
+Ctrl/Cmd-click on `styles` opens the stylesheet, on `cssVars` opens its
+`@vars` blocks, and on `Variants` opens its group declarations. WebStorm
+shows a chooser when there are several destinations. Set colors for XCSS
+imports, class names, and provided variable names under **Editor → Color
+Scheme → XCSS → TypeScript**.
 
 Completion uses the same module and group information. It suggests styles-map
 keys, group names, contextual variant values, and class names inside
@@ -89,10 +97,25 @@ configuration, and usages include matching files that are closed in the editor.
 WebStorm underlines XCSS analyzer errors in open stylesheets and in TypeScript
 files covered by a project configuration. Hover over a highlight to see its
 stable `XC-*` code and explanation. TypeScript diagnostics cover unknown
-classes and variant groups, invalid variant values, and unresolved XCSS
-imports. Unsaved stylesheet and TypeScript edits refresh the highlights.
+classes, provided variables and variant groups, invalid variant values, unresolved
+XCSS imports, and invalid `xClass` and `xVars` JSX attributes. Unsaved stylesheet
+and TypeScript edits refresh the highlights.
 
-### TypeScript declaration setup
+### Guided Vite setup
+
+CrossBreeze checks Vite packages when you open a project, including packages
+that have yet to use XCSS. Choose **Review setup** to see the missing steps and
+a diff for each proposed file. **Apply** writes the reviewed changes in one
+undoable command. **Don't show again** dismisses the offer for that package.
+
+Setup can register `@cross-css/vite`, add the TypeScript client declaration,
+and configure the `xClass` and `xVars` JSX runtime for React TypeScript projects.
+It uses the app's TypeScript config when the root config only references other
+projects. If the dependency is missing, the review shows the install command.
+Dynamic Vite configs and conflicting JSX settings show the manual step instead.
+JavaScript-only projects receive the Vite plugin setup for stylesheet imports.
+
+### TypeScript declaration setup outside Vite
 
 When an XCSS file or a TypeScript file importing XCSS is opened, CrossBreeze
 shows an editor banner if its TypeScript project is missing XCSS declarations.
@@ -102,14 +125,10 @@ root, otherwise `src` when present, otherwise beside the TS configuration.
 The Vite plugin's client declaration must already be installed in the project.
 
 Existing client references, ambient `*.xcss` declarations, and the tsconfig
-`types` option suppress the banner, including inherited settings. Existing files
-are preserved; when the default name is occupied, CrossBreeze uses
-`crossbreeze-xcss-env.d.ts`. If an explicit file list or exclusion prevents TS
-from including the new file, a follow-up banner opens the TS configuration for
-you to include it. CrossBreeze does not change your tsconfig automatically.
-**Don't show again** remembers dismissal for that TS project. Banners refresh
-when declarations or TS configuration change. No project files are created
-until you choose the action.
+`types` option suppress the banner, including inherited settings. If the default
+filename is occupied, CrossBreeze uses `crossbreeze-xcss-env.d.ts`. If an explicit
+file list or exclusion prevents TypeScript from including the new file, the
+banner offers to open the TypeScript configuration.
 
 ## CSS validation
 
@@ -171,7 +190,7 @@ sandbox. Open a multi-file XCSS project, check diagnostics, Ctrl/Cmd-click an
 injection or variable, find references, inspect hover, and edit an unsaved document
 to verify live highlighting and diagnostics. Configure Node inside the sandbox.
 
-CrossBreeze pins **@cross-css/native 0.9.0 from npm**, including package-lock
+CrossBreeze pins **@cross-css/native 0.11.0 from npm**, including package-lock
 integrity. Packaging fetches the locked tarballs for each target, verifies SHA-512
 integrity, includes licenses, and records per-file hashes. The npm bundle smoke
 test loads the target matching the current Node runtime.

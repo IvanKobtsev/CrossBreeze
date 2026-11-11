@@ -10,12 +10,12 @@ import javax.xml.parsers.DocumentBuilderFactory
 
 plugins {
     id("org.jetbrains.kotlin.jvm") version "2.3.20"
-    id("org.jetbrains.intellij.platform") version "2.19.0"
+    id("org.jetbrains.intellij.platform") version "2.20.1"
 }
 repositories { mavenCentral(); intellijPlatform { defaultRepositories() } }
 dependencies {
     intellijPlatform {
-        webstorm("2026.2.1")
+        webstorm("2026.3")
         bundledPlugin("JavaScript")
         bundledPlugin("NodeJS")
         testFramework(TestFrameworkType.Platform)
@@ -40,9 +40,9 @@ val nativeBundles = nativeTargets.keys.associateWith { target ->
 
 intellijPlatform {
     pluginConfiguration {
-        ideaVersion { sinceBuild = "262.9437.145" }
+        ideaVersion { sinceBuild = "263.7307.202" }
     }
-    pluginVerification { ides { create(org.jetbrains.intellij.platform.gradle.IntelliJPlatformType.WebStorm, "2026.2.1") } }
+    pluginVerification { ides { create(org.jetbrains.intellij.platform.gradle.IntelliJPlatformType.WebStorm, "2026.3") } }
     nativeVariants {
         enabled = true
         linux.x86_64.from(nativeBundles.getValue("linux-x86_64"))
@@ -96,7 +96,7 @@ abstract class VerifyPluginArchive : DefaultTask() {
                 check(entries.filter { it.endsWith("/xcss.node") }.toSet() == nativePackages.map { "$modules$it/xcss.node" }.toSet()) {
                     "$name contains the wrong native binaries"
                 }
-                for (file in listOf("index.cjs.map", "worker.cjs", "worker.cjs.map")) {
+                for (file in listOf("index.cjs.map", "worker.cjs", "worker.cjs.map", "vite-setup.cjs", "vite-setup.cjs.map")) {
                     check(server + file in entries) { "$name is missing $file" }
                 }
                 val manifest = readManifest(zip, "${server}native-loader-manifest.json", setOf(loader)) +

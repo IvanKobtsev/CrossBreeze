@@ -32,6 +32,7 @@ import javax.swing.JComponent
 /** Offers a project declaration only; the language server never creates project files. */
 class XcssTypescriptSetupNotification : EditorNotificationProvider {
     override fun collectNotificationData(project: Project, file: VirtualFile): Function<FileEditor, JComponent>? {
+        if (project.service<ViteSetupService>().owns(file)) return null
         project.service<XcssTypescriptSetupRefresh>()
         val plan = XcssTypescriptSetup.plan(project, file) ?: return null
         return Function { editor ->

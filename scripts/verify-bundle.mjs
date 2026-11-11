@@ -39,7 +39,7 @@ async function verify(root, target) {
   const { LanguageService, languageServiceCapabilities, formatSource } = require(loader)
   assert.equal(typeof formatSource, 'function', 'Bundled engine must include the XCSS formatter')
   assert.equal(formatSource('.a{color:red}').text, '.a {\n  color: red;\n}\n')
-  assert.equal(languageServiceCapabilities().apiVersion, 5)
+  assert.equal(languageServiceCapabilities().apiVersion, 6)
   const service = new LanguageService()
   service.setFile('file:///test.xcss', 1, '.button { color: red; }')
   assert.equal(service.document('file:///test.xcss').diagnostics.length, 0)
@@ -52,7 +52,17 @@ async function verify(root, target) {
   const [syntaxError] = service.document('file:///broken.xcss').diagnostics
   assert.equal(syntaxError.code, 'XC-105')
   assert.equal(syntaxError.label, 'Invalid XCSS statement')
-  assert.deepEqual(languageServiceCapabilities().tokenTypes.slice(-3), ['cssFunction', 'cssKeyword', 'cssColor'])
+  assert.deepEqual(languageServiceCapabilities().tokenTypes.slice(-3), ['xcssClassMember', 'xcssProvidedVariable', 'xcssImport'])
+  const tsService = new LanguageService()
+  const source = 'import { cssVars } from "./theme.xcss"; cssVars.width;'
+  tsService.setFile('theme.xcss', 1, '@vars { @provided --width: length; }')
+  tsService.setTypescriptProject('tsconfig.json')
+  tsService.setTypescriptFile('tsconfig.json', 1, '{"files":["app.ts"]}')
+  tsService.setTypescriptFile('app.ts', 1, source)
+  const position = { line: 0, character: source.indexOf('width') }
+  assert.deepEqual(tsService.definitionDetails('app.ts', position).origin.start, position)
+  assert.equal(tsService.definition('app.ts', position)[0].uri, 'theme.xcss')
+  assert.equal(tsService.document('app.ts').tokens.length, 2)
   service.setFile('file:///selectors.xcss', 1, '#root, .parent { svg|a.button[data-kind="hello"]:where(.disabled)::after > * { & + .child {} } }')
   const selectors = service.selectors('file:///selectors.xcss')
   assert.equal(selectors.selectors.length, 4)
@@ -63,6 +73,7 @@ async function verify(root, target) {
     assert(selectorTokens.some(token => legend[token.tokenType] === kind), `Missing bundled selector token: ${kind}`)
   }
   const worker = new Worker(join(root, 'worker.cjs'))
+  assert.equal(execFileSync(process.execPath, [join(root, 'vite-setup.cjs')], { input: '[]', encoding: 'utf8' }), '[]')
   let id = 0
   async function call(method, ...args) {
     const requestId = ++id

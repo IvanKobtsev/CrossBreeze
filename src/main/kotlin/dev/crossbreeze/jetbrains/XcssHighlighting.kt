@@ -32,11 +32,15 @@ object XcssColors {
     val SELECTOR_NESTING = TextAttributesKey.createTextAttributesKey("XCSS.SELECTOR_NESTING", Colors.KEYWORD)
     val SELECTOR_COMBINATOR = TextAttributesKey.createTextAttributesKey("XCSS.SELECTOR_COMBINATOR", Colors.OPERATION_SIGN)
     val SELECTOR_NAMESPACE = TextAttributesKey.createTextAttributesKey("XCSS.SELECTOR_NAMESPACE", Colors.CLASS_REFERENCE)
+    val TS_CLASS_MEMBER = TextAttributesKey.createTextAttributesKey("XCSS.TS_CLASS_MEMBER", Colors.CLASS_REFERENCE)
+    val TS_PROVIDED_VARIABLE = TextAttributesKey.createTextAttributesKey("XCSS.TS_PROVIDED_VARIABLE", Colors.STATIC_FIELD)
+    val TS_IMPORT = TextAttributesKey.createTextAttributesKey("XCSS.TS_IMPORT", Colors.METADATA)
     val semantic = linkedMapOf("function" to FUNCTION, "parameter" to PARAMETER, "variable" to VARIABLE,
         "namespace" to NAMESPACE, "type" to TYPE, "class" to CLASS, "enumMember" to KEYFRAME, "property" to PROPERTY,
         "selectorId" to SELECTOR_ID, "selectorTag" to SELECTOR_TAG, "selectorAttribute" to SELECTOR_ATTRIBUTE,
         "pseudoClass" to PSEUDO_CLASS, "pseudoElement" to PSEUDO_ELEMENT, "selectorUniversal" to SELECTOR_UNIVERSAL,
-        "selectorNesting" to SELECTOR_NESTING, "selectorCombinator" to SELECTOR_COMBINATOR, "selectorNamespace" to SELECTOR_NAMESPACE, "cssFunction" to CSS_FUNCTION, "cssKeyword" to CSS_KEYWORD, "cssColor" to CSS_COLOR)
+        "selectorNesting" to SELECTOR_NESTING, "selectorCombinator" to SELECTOR_COMBINATOR, "selectorNamespace" to SELECTOR_NAMESPACE, "cssFunction" to CSS_FUNCTION, "cssKeyword" to CSS_KEYWORD, "cssColor" to CSS_COLOR,
+        "xcssClassMember" to TS_CLASS_MEMBER, "xcssProvidedVariable" to TS_PROVIDED_VARIABLE, "xcssImport" to TS_IMPORT)
     val displayNames = mapOf(
         "function" to "Injection", "parameter" to "Parameter", "variable" to "Variable", "namespace" to "Import namespace",
         "type" to "Type", "class" to "Selectors//Class", "enumMember" to "Keyframe", "property" to "Property",
@@ -44,7 +48,9 @@ object XcssColors {
         "pseudoClass" to "Selectors//Pseudo-class", "pseudoElement" to "Selectors//Pseudo-element",
         "selectorUniversal" to "Selectors//Universal", "selectorNesting" to "Selectors//Nesting",
         "selectorCombinator" to "Selectors//Combinator", "selectorNamespace" to "Selectors//Namespace prefix",
-        "cssFunction" to "CSS values//Function", "cssKeyword" to "CSS values//Keyword", "cssColor" to "CSS values//Color literal")
+        "cssFunction" to "CSS values//Function", "cssKeyword" to "CSS values//Keyword", "cssColor" to "CSS values//Color literal",
+        "xcssClassMember" to "TypeScript//Class name", "xcssProvidedVariable" to "TypeScript//Provided variable name",
+        "xcssImport" to "TypeScript//XCSS import")
 }
 class XcssSyntaxHighlighter : SyntaxHighlighterBase() {
     override fun getHighlightingLexer() = XcssLexer()
@@ -82,6 +88,9 @@ class XcssColorSettingsPage : ColorSettingsPage {
           background: <cssFunction>linear-gradient</cssFunction>(<cssColor>red</cssColor>, <cssColor>#fff</cssColor>);
           transform: <cssFunction>translateY</cssFunction>(-25.5px); }
         @keyframes <enumMember>spin</enumMember> { to { opacity: 1; } }
+
+        import { <xcssImport>styles</xcssImport>, <xcssImport>cssVars</xcssImport> } from "./theme.xcss";
+        styles.<xcssClassMember>button</xcssClassMember>; cssVars.<xcssProvidedVariable>buttonWidth</xcssProvidedVariable>;
     """.trimIndent()
     override fun getAdditionalHighlightingTagToDescriptorMap() = XcssColors.semantic
     override fun getAttributeDescriptors() = XcssColors.semantic.map { (name, key) -> AttributesDescriptor(XcssColors.displayNames.getValue(name), key) }.toTypedArray()

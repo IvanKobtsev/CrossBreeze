@@ -29,7 +29,8 @@ class XcssHighlightingTest : BasePlatformTestCase() {
     fun testSemanticLegendAndLexicalFallback() {
         assertEquals(listOf("function", "parameter", "variable", "namespace", "type", "class", "enumMember", "property",
             "selectorId", "selectorTag", "selectorAttribute", "pseudoClass", "pseudoElement", "selectorUniversal",
-            "selectorNesting", "selectorCombinator", "selectorNamespace", "cssFunction", "cssKeyword", "cssColor"), XcssColors.semantic.keys.toList())
+            "selectorNesting", "selectorCombinator", "selectorNamespace", "cssFunction", "cssKeyword", "cssColor",
+            "xcssClassMember", "xcssProvidedVariable", "xcssImport"), XcssColors.semantic.keys.toList())
         assertTrue(XcssSyntaxHighlighter().getTokenHighlights(XcssTokens.VARIABLE).isNotEmpty())
         assertTrue(XcssSyntaxHighlighter().getTokenHighlights(XcssTokens.PARAMETER).isNotEmpty())
         assertTrue(XcssSyntaxHighlighter().getTokenHighlights(XcssTokens.COMMENT).isNotEmpty())

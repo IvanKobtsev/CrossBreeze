@@ -4,7 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createConnection, TextDocuments, TextDocumentSyncKind, ResponseError, LSPErrorCodes, ErrorCodes, DiagnosticSeverity, CompletionItemKind, type CancellationToken, type Position, type InitializeParams } from 'vscode-languageserver/node.js'
 import { TextDocument } from 'vscode-languageserver-textdocument'
 import { watch, type FSWatcher } from 'chokidar'
-import { languageServiceCapabilities, type EditorCompletion, type EditorDiagnostic, type EditorDocument, type EditorExportedSymbol, type EditorHover, type EditorLocation } from '@cross-css/native'
+import { languageServiceCapabilities, type EditorCompletion, type EditorDefinitionDetails, type EditorDiagnostic, type EditorDocument, type EditorExportedSymbol, type EditorHover, type EditorLocation, type SemanticToken } from '@cross-css/native'
 import { canonicalUri, isExcludedPath, type Aliases } from './project.js'
 import { defaultCssValidation, type CssValidationOptions } from './css-validation.js'
 import { colorPresentation } from './css-values.js'
@@ -220,7 +220,7 @@ function isTypescript(uri: string) {
 function editorUri(uri: string) {
   return open.get(canonicalUri(uri))?.uri ?? uri
 }
-async function typescriptQuery<T>(method: string, uri: string, position: Position, check: () => void) {
+async function typescriptQuery<T>(method: string, uri: string, position: Position | undefined, check: () => void) {
   const [target] = await typescriptTargets([editorUri(uri)])
   check()
   return call<T>('typescriptQuery', method, target, position)
@@ -228,9 +228,11 @@ async function typescriptQuery<T>(method: string, uri: string, position: Positio
 connection.onDefinition(async (params, token) => {
   const { textDocument: { uri }, position } = params
   if (isTypescript(uri)) {
-    const locations = await currentQuery(token, check => typescriptQuery<EditorLocation[]>('definition', uri, position, check))
+    const details = await currentQuery(token, check => typescriptQuery<EditorDefinitionDetails | null>('definition', uri, position, check))
+    if (!details) return []
+    const { targets: locations, origin: originSelectionRange } = details
     return definitionLinks
-      ? locations.map(({ uri, range }) => ({ targetUri: editorUri(uri), targetRange: range, targetSelectionRange: range }))
+      ? locations.map(({ uri, range }) => ({ originSelectionRange, targetUri: editorUri(uri), targetRange: range, targetSelectionRange: range }))
       : locations.map(location => ({ ...location, uri: editorUri(location.uri) }))
   }
   if (definitionLinks) {
@@ -319,10 +321,13 @@ connection.onDocumentFormatting(async (params, token) => {
   }
 })
 connection.languages.semanticTokens.on(async (params, token) => {
-  const document = await query<EditorDocument>('document', params.textDocument.uri, token)
+  const uri = params.textDocument.uri
+  const tokens = isTypescript(uri)
+    ? await currentQuery(token, check => typescriptQuery<SemanticToken[]>('tokens', uri, undefined, check))
+    : (await query<EditorDocument>('document', uri, token)).tokens
   const data: number[] = []
   let line = 0, character = 0
-  for (const item of document.tokens) {
+  for (const item of tokens) {
     data.push(item.line - line, item.line === line ? item.character - character : item.character, item.length, item.tokenType, item.declaration ? 1 : 0)
     line = item.line; character = item.character
   }

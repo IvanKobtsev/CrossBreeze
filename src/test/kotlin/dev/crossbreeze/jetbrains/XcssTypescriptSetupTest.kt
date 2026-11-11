@@ -11,7 +11,7 @@ import kotlin.test.assertNull
 class XcssTypescriptSetupTest : BasePlatformTestCase() {
     private fun setup(config: String = """{"include":["src"]}""") = myFixture.addFileToProject("tsconfig.json", config).also {
         myFixture.addFileToProject("node_modules/@cross-css/vite/client.d.ts", "declare module '*.xcss' {}")
-        myFixture.addFileToProject("src/Button.tsx", "import styles from './Button.xcss';")
+        myFixture.addFileToProject("src/Button.tsx", "import { styles } from './Button.xcss';")
     }
 
     fun testOffersFileInSourceDirectoryAndCreatesItOnce() {

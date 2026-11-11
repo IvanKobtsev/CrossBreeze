@@ -4,6 +4,7 @@ import com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterManager
 import com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterRef
 import com.intellij.javascript.nodejs.interpreter.local.NodeJsLocalInterpreter
 import com.intellij.lang.annotation.HighlightSeverity
+import com.intellij.openapi.actionSystem.IdeActions
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.roots.ProjectFileIndex
@@ -33,9 +34,16 @@ class XcssDiagnosticsTest : BasePlatformTestCase() {
         NodeJsInterpreterManager.getInstance(project).setInterpreterRef(
             NodeJsInterpreterRef.create(NodeJsLocalInterpreter(node)), testRootDisposable,
         )
-        val stylesheet = myFixture.tempDirFixture.createFile("theme.xcss", ".valid {}\nbogus;")
-        val config = myFixture.tempDirFixture.createFile("tsconfig.json", """{"files":["app.ts"]}""")
-        val script = myFixture.tempDirFixture.createFile("app.ts", "import styles from './theme.xcss'; styles.missing;")
+        val validStyle = "@vars { @provided --button-width: length; }\n.valid {}"
+        val stylesheet = myFixture.tempDirFixture.createFile("theme.xcss", "$validStyle\nbogus;")
+        myFixture.tempDirFixture.createFile("xcss-env.d.ts", """
+            declare module '*.xcss' {
+                export const styles: Record<string, string>;
+                export const cssVars: Readonly<Record<string, string>>;
+            }
+        """.trimIndent())
+        val config = myFixture.tempDirFixture.createFile("tsconfig.json", """{"files":["app.ts","xcss-env.d.ts"]}""")
+        val script = myFixture.tempDirFixture.createFile("app.ts", "import { styles, cssVars } from './theme.xcss'; styles.missing;")
         if (!ProjectFileIndex.getInstance(project).isInContent(script)) PsiTestUtil.addContentRoot(module, script.parent)
 
         val manager = LspClientManager.getInstance(project)
@@ -54,8 +62,8 @@ class XcssDiagnosticsTest : BasePlatformTestCase() {
         }))
         try {
             for ((file, code, token, fixed) in listOf(
-                Example(stylesheet, "XC-105", "bogus", ".valid {}"),
-                Example(script, "XC-001", "missing", "import styles from './theme.xcss'; styles.valid;"),
+                Example(stylesheet, "XC-105", "bogus", validStyle),
+                Example(script, "XC-001", "missing", "import { styles, cssVars } from './theme.xcss'; styles.valid; cssVars.buttonWidth;"),
             )) {
                 // Prepare the fixture before the real editor publishes its document version.
                 myFixture.configureFromExistingVirtualFile(file)
@@ -75,6 +83,24 @@ class XcssDiagnosticsTest : BasePlatformTestCase() {
                 }, 20)
                 assertNull(highlight())
             }
+            val editor = myFixture.editor
+            val expectedTokens = mapOf(
+                XcssColors.TS_IMPORT to setOf("styles", "cssVars"),
+                XcssColors.TS_CLASS_MEMBER to setOf("valid"),
+                XcssColors.TS_PROVIDED_VARIABLE to setOf("buttonWidth"),
+            )
+            PlatformTestUtil.waitWithEventsDispatching("TypeScript XCSS highlighting was not applied", {
+                val highlights = myFixture.doHighlighting()
+                expectedTokens.all { (key, tokens) ->
+                    highlights.filter { it.forcedTextAttributesKey == key }
+                        .map { editor.document.text.substring(it.startOffset, it.endOffset) }.toSet() == tokens
+                }
+            }, 10)
+            editor.caretModel.moveToOffset(editor.document.text.indexOf("styles") + 2)
+            myFixture.performEditorAction(IdeActions.ACTION_GOTO_DECLARATION)
+            PlatformTestUtil.waitWithEventsDispatching("Go to Declaration did not open the stylesheet for the named import", {
+                editors.selectedFiles.firstOrNull() == stylesheet && editors.selectedTextEditor?.caretModel?.offset == 0
+            }, 10)
         } finally {
             settings.state.enabled = false
             manager.stopClients(CrossBreezeLspIntegrationProvider::class.java)

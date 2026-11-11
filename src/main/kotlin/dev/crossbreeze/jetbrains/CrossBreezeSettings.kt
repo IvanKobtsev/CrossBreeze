@@ -74,6 +74,7 @@ class CrossBreezeConfigurable(private val project: Project) : Configurable {
         catch (error: Exception) { throw ConfigurationException(error.message ?: "Invalid aliases") }
         val settings = project.service<CrossBreezeSettings>()
         settings.loadState(CrossBreezeSettings.Data(enabled.isSelected, aliases.text, checkCssProperties.isSelected, checkCssValues.isSelected))
+        project.service<ViteSetupService>().refresh()
         project.service<CrossBreezeRuntime>().reset()
         LspClientManager.getInstance(project).stopAndRestartClientsIfNeeded(CrossBreezeLspIntegrationProvider::class.java)
     }

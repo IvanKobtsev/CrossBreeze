@@ -99,13 +99,18 @@ class Checker {
   }
 
   diagnostics(id: string): EditorDiagnostic[] {
-    return this.service.document(id).diagnostics.map(diagnostic => ({
+    return this.service.document(id, false).diagnostics.map(diagnostic => ({
       ...diagnostic, location: this.location(diagnostic.location), related: diagnostic.related.map(value => this.location(value)),
     }))
   }
 
   definition(id: string, position: EditorPosition) {
-    return this.service.definition(id, position).map(value => this.location(value))
+    const details = this.service.definitionDetails(id, position)
+    return details && { ...details, targets: details.targets.map(value => this.location(value)) }
+  }
+
+  tokens(id: string) {
+    return this.service.document(id).tokens
   }
 
   completion(id: string, position: EditorPosition) {
@@ -305,19 +310,19 @@ export class TypescriptProjects {
     return { checker, preferred: checker.update(config, files, resolveImport) }
   }
 
-  query(method: 'definition' | 'completion' | 'symbols', target: TypescriptTarget, position: EditorPosition,
+  query(method: 'definition' | 'completion' | 'symbols' | 'tokens', target: TypescriptTarget, position: EditorPosition | undefined,
     open: OpenInputs, styles: StyleInputs, resolveImport: ResolveImport) {
     for (const [key, { config }] of this.groups([target])) {
       try {
         const { checker, preferred } = this.prepare(key, config, open, styles, resolveImport)
         const id = preferred.get(target.uri)
-        if (id) return checker[method](id, position)
+        if (id) return method === 'tokens' ? checker.tokens(id) : checker[method](id, position!)
       } catch (error) {
         this.checkers.delete(key)
         this.report(key, String(error))
       }
     }
-    return []
+    return method === 'definition' ? null : []
   }
 
   references(symbols: EditorExportedSymbol[], targets: TypescriptTarget[], includeDeclaration: boolean,

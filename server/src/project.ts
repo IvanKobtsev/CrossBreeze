@@ -141,7 +141,7 @@ export class Project {
   typescriptSources() {
     return this.typescript.sources(this.open).map(uri => this.open.get(uri)?.uri ?? uri)
   }
-  typescriptQuery(method: 'definition' | 'completion' | 'symbols', target: TypescriptTarget, position: EditorPosition) {
+  typescriptQuery(method: 'definition' | 'completion' | 'symbols' | 'tokens', target: TypescriptTarget, position?: EditorPosition) {
     return this.typescript.query(method, target, position, this.open, this.files, (uri, specifier) => this.resolve(uri, specifier))
   }
   editorReferences(symbols: EditorExportedSymbol[], targets: TypescriptTarget[], includeDeclaration: boolean) {

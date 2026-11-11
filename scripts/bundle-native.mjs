@@ -48,7 +48,7 @@ async function extractPackages(packages, destination, archive) {
 }
 
 async function copySharedFiles(destination) {
-  for (const name of ['index.cjs', 'index.cjs.map', 'worker.cjs', 'worker.cjs.map']) {
+  for (const name of ['index.cjs', 'index.cjs.map', 'worker.cjs', 'worker.cjs.map', 'vite-setup.cjs', 'vite-setup.cjs.map']) {
     await copyFile(join('server/out', name), join(destination, name))
   }
   const licenses = join(destination, 'licenses')

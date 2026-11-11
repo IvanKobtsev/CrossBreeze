@@ -126,7 +126,10 @@ internal class CrossBreezeDescriptor(project: Project, private val root: Path) :
             override fun shouldFormatThisFileExclusivelyByServer(file: VirtualFile, ideCanFormatThisFileItself: Boolean, serverExplicitlyWantsToFormatThisFile: Boolean) = file.extension == "xcss"
         }
         override val semanticTokensCustomizer = object : LspSemanticTokensSupport() {
-            override fun shouldAskServerForSemanticTokens(psiFile: com.intellij.psi.PsiFile) = psiFile.language == XcssLanguage
+            override fun shouldAskServerForSemanticTokens(psiFile: com.intellij.psi.PsiFile) =
+                psiFile.language == XcssLanguage || psiFile.virtualFile?.let {
+                    it.extension in typescriptExtensions && isSupportedFile(it)
+                } == true
             override val tokenTypes = XcssColors.semantic.keys.toList()
             override val tokenModifiers = listOf("declaration")
             override fun getTextAttributesKey(tokenType: String, modifiers: List<String>) = XcssColors.semantic[tokenType]

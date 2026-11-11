@@ -92,8 +92,8 @@ test('stdio lifecycle, diagnostics, navigation, highlighting, unsaved edits and 
 test('stylesheet symbols cross TypeScript projects with unsaved edits and precise completion', { timeout: 20000 }, async t => {
   const root = mkdtempSync(join(tmpdir(), 'crossbreeze-symbols-'))
   const uri = file => pathToFileURL(join(root, file)).href
-  const css = '.primary {} .secondary {}\n@variants Button: .primary, .secondary;\n@variants Other: .primary;'
-  const ts = 'import styles, { type Variants as V } from "./theme.xcss";\n/* 😀 */ styles.primary; const value: V<"Button"> = "primary";'
+  const css = '.primary {} .secondary {}\n@variants Button: .primary, .secondary;\n@variants Other: .primary;\n.primary {}\n@vars { @provided --button-width: length; }\n@vars { @provided { --gap: length; } }'
+  const ts = 'import { styles, cssVars as vars, type Variants as V } from "./theme.xcss";\n/* 😀 */ styles.primary; const value: V<"Button"> = "primary";\nvars.buttonWidth; vars["gap"];'
   const write = (file, text) => writeFileSync(join(root, file), text)
   write('theme.xcss', css)
   write('open.ts', 'export {};')
@@ -128,7 +128,30 @@ test('stylesheet symbols cross TypeScript projects with unsaved edits and precis
   assert.equal(valueLink.targetUri, uri('theme.xcss'))
   assert.deepEqual(valueLink.targetSelectionRange.start, member.position)
   assert.deepEqual((await request('textDocument/definition', group)).result[0].targetSelectionRange.start, { line: 1, character: 10 })
-  assert.deepEqual((await request('textDocument/definition', styles)).result[0].targetSelectionRange.start, { line: 0, character: 1 })
+  const classLinks = (await request('textDocument/definition', styles)).result
+  assert.deepEqual(classLinks.map(link => link.targetSelectionRange.start), [{ line: 0, character: 1 }, { line: 3, character: 1 }])
+  assert.deepEqual(classLinks[0].originSelectionRange.start, styles.position)
+  const definitions = async (line, character) => (await request('textDocument/definition', params('open.ts', line, character))).result
+  assert.deepEqual((await definitions(1, secondLine.indexOf('styles')))[0].targetSelectionRange.start, { line: 0, character: 0 })
+  assert.deepEqual((await definitions(1, secondLine.indexOf('V<'))).map(link => link.targetSelectionRange.start.line), [1, 2])
+  assert.deepEqual((await definitions(2, 0)).map(link => link.targetSelectionRange.start.line), [4, 5])
+  assert.equal((await definitions(2, 5))[0].targetSelectionRange.start.line, 4)
+  assert.equal((await definitions(2, 25))[0].targetSelectionRange.start.line, 5)
+  const legend = initialized.result.capabilities.semanticTokensProvider.legend.tokenTypes
+  const { result: { data } } = await request('textDocument/semanticTokens/full', { textDocument: { uri: uri('open.ts') } })
+  const tokens = []
+  let line = 0, character = 0
+  for (let i = 0; i < data.length; i += 5) {
+    const [lineDelta, characterDelta, length, kind] = data.slice(i, i + 5)
+    line += lineDelta
+    character = lineDelta ? characterDelta : character + characterDelta
+    tokens.push([legend[kind], ts.split('\n')[line].slice(character, character + length)])
+  }
+  assert.deepEqual(tokens, [
+    ['xcssImport', 'styles'], ['xcssImport', 'cssVars'], ['xcssImport', 'vars'],
+    ['xcssImport', 'Variants'], ['xcssImport', 'V'], ['xcssClassMember', 'primary'],
+    ['xcssProvidedVariable', 'buttonWidth'], ['xcssProvidedVariable', 'gap'],
+  ])
   assert.deepEqual(new Set((await refs(member)).map(result => result.uri.split('/').at(-1))), new Set(['open.ts', 'closed.ts']))
   assert.equal((await refs(value, true)).length, 3)
   assert.equal((await refs(params('theme.xcss', 2, 18))).length, 0)
