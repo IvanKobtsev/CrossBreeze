@@ -6,7 +6,6 @@ import com.intellij.diff.DiffContentFactory
 import com.intellij.diff.DiffManager
 import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.execution.configurations.GeneralCommandLine
-import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.ide.util.PropertiesComponent
 import com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterManager
 import com.intellij.javascript.nodejs.interpreter.local.NodeJsLocalInterpreter
@@ -23,7 +22,8 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
-import com.intellij.openapi.extensions.PluginId
+import com.intellij.openapi.extensions.PluginAware
+import com.intellij.openapi.extensions.PluginDescriptor
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
@@ -52,9 +52,15 @@ import java.util.concurrent.atomic.AtomicLong
 import javax.swing.JComponent
 import javax.swing.JPanel
 
-internal class ViteSetupStartup : ProjectActivity {
+internal class ViteSetupStartup : ProjectActivity, PluginAware {
+    private lateinit var planner: Path
+
+    override fun setPluginDescriptor(pluginDescriptor: PluginDescriptor) {
+        planner = pluginDescriptor.pluginPath.resolve("server/vite-setup.cjs")
+    }
+
     override suspend fun execute(project: Project) {
-        project.service<ViteSetupService>().refresh()
+        project.service<ViteSetupService>().start(planner)
     }
 }
 
@@ -71,6 +77,7 @@ internal class ViteSetupService(private val project: Project) {
     private val revision = AtomicLong()
     private val offers = mutableMapOf<String, Pair<Plan, Notification>>()
     @Volatile private var packages: Set<String> = emptySet()
+    @Volatile private var planner: Path? = null
 
     init {
         ApplicationManager.getApplication().messageBus.connect(project).subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
@@ -103,6 +110,11 @@ internal class ViteSetupService(private val project: Project) {
         }, 350)
     }
 
+    fun start(script: Path) {
+        planner = script
+        refresh()
+    }
+
     fun owns(file: VirtualFile): Boolean {
         val manifest = generateSequence(file.parent) { it.parent }
             .mapNotNull { it.findChild("package.json") }.firstOrNull() ?: return false
@@ -112,6 +124,7 @@ internal class ViteSetupService(private val project: Project) {
 
     private fun inspect(onlyRoot: String? = null): Map<String, Plan> {
         if (project.isDisposed || !project.service<CrossBreezeSettings>().state.enabled) return emptyMap()
+        val script = planner ?: return emptyMap()
         val inputs = ReadAction.computeBlocking<List<Input>, RuntimeException> {
             val index = ProjectFileIndex.getInstance(project)
             val manifests = mutableMapOf<String, VirtualFile>()
@@ -141,8 +154,6 @@ internal class ViteSetupService(private val project: Project) {
             ?: return inputs.associate { input ->
                 input.root to Plan(emptyList(), listOf(Step("Configure a local Node.js runtime in WebStorm to review XCSS setup.", input.root)))
             }
-        val plugin = PluginManagerCore.getPlugin(PluginId.getId("dev.crossbreeze.jetbrains")) ?: return emptyMap()
-        val script = plugin.pluginPath.resolve("server/vite-setup.cjs")
         val plans = runPlanner(interpreter, script, inputs)
         return plans.ifEmpty {
             inputs.associate { input ->

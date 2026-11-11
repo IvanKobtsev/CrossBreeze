@@ -3,11 +3,13 @@ package dev.crossbreeze.jetbrains
 import com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterManager
 import com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterRef
 import com.intellij.javascript.nodejs.interpreter.local.NodeJsLocalInterpreter
+import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.notification.Notification
 import com.intellij.notification.Notifications
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.command.undo.UndoManager
 import com.intellij.openapi.components.service
+import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.testFramework.LightProjectDescriptor
@@ -35,7 +37,8 @@ class ViteSetupTest : BasePlatformTestCase() {
                 if (notification.title.startsWith("XCSS setup for ")) offer = notification
             }
         })
-        runBlocking { ViteSetupStartup().execute(project) }
+        val descriptor = requireNotNull(PluginManagerCore.getPlugin(PluginId.getId("dev.crossbreeze.jetbrains")))
+        runBlocking { ViteSetupStartup().apply { setPluginDescriptor(descriptor) }.execute(project) }
         PlatformTestUtil.waitWithEventsDispatching("No Vite setup notification after project startup", { offer != null }, 20)
         assertEquals(listOf("Review setup", "Don't show again"), offer?.actions?.map { it.templatePresentation.text })
         assertNull(manifest.parent.findChild("vite.config.ts"))
