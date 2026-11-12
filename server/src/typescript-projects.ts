@@ -3,6 +3,8 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { LanguageService, inspect, type EditorDiagnostic, type EditorExportedSymbol, type EditorLocation, type EditorPosition } from '@cross-css/native'
 import { parse } from 'jsonc-parser'
+import ts from 'typescript'
+import { languageServiceCapabilities } from '@cross-css/native'
 
 export const typescriptFile = /\.(?:ts|tsx|mts|cts)$/
 export const typescriptInput = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs|json|xcss)$/
@@ -110,7 +112,43 @@ class Checker {
   }
 
   tokens(id: string) {
-    return this.service.document(id).tokens
+    const tokens = [...this.service.document(id).tokens]
+    const input = this.inputs.get(id)
+    if (!input) return tokens
+    // Bind locally without loading a second TypeScript project or resolving modules.
+    const source = ts.createSourceFile(id, input.text, ts.ScriptTarget.Latest, true)
+    const host: ts.CompilerHost = {
+      getSourceFile: name => name === id ? source : undefined,
+      getDefaultLibFileName: () => '', writeFile: () => {}, getCurrentDirectory: () => '',
+      getDirectories: () => [], fileExists: name => name === id,
+      readFile: name => name === id ? input.text : undefined,
+      getCanonicalFileName: name => name, useCaseSensitiveFileNames: () => true, getNewLine: () => '\n',
+    }
+    const checker = ts.createProgram([id], { noLib: true, noResolve: true }, host).getTypeChecker()
+    const bindings = new Set<ts.Symbol>()
+    for (const statement of source.statements) {
+      if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)
+        || !statement.moduleSpecifier.text.endsWith('.xcss')) continue
+      const imports = statement.importClause?.namedBindings
+      if (!imports || !ts.isNamedImports(imports)) continue
+      for (const specifier of imports.elements) {
+        if (!['styles', 'cssVars'].includes((specifier.propertyName ?? specifier.name).text)) continue
+        const symbol = checker.getSymbolAtLocation(specifier.name)
+        if (symbol) bindings.add(symbol)
+      }
+    }
+    const tokenType = languageServiceCapabilities().tokenTypes.indexOf('xcssImport')
+    const visit = (node: ts.Node) => {
+      if (ts.isIdentifier(node) && bindings.has(checker.getSymbolAtLocation(node)!)) {
+        const { line, character } = source.getLineAndCharacterOfPosition(node.getStart(source))
+        if (!tokens.some(token => token.line === line && token.character === character)) {
+          tokens.push({ line, character, length: node.text.length, tokenType, declaration: false })
+        }
+      }
+      ts.forEachChild(node, visit)
+    }
+    if (tokenType >= 0 && bindings.size) visit(source)
+    return tokens.sort((a, b) => a.line - b.line || a.character - b.character)
   }
 
   completion(id: string, position: EditorPosition) {

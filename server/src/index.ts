@@ -77,7 +77,17 @@ async function typescriptTargets(uris: string[]): Promise<TypescriptTarget[]> {
     ...target, config: typeof configs[index] === 'string' ? configs[index] : null,
   }))
 }
+let publishing = false
+let publishAgain = false
 async function publish() {
+  if (publishing) { publishAgain = true; return }
+  publishing = true
+  try { await publishCurrent() } finally {
+    publishing = false
+    if (publishAgain && !shutdown) { publishAgain = false; scheduleDiagnostics() }
+  }
+}
+async function publishCurrent() {
   const generation = epoch
   await ready
   if (generation !== epoch || shutdown) return

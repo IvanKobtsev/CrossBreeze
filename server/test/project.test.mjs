@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import projectModule from '../out/project.cjs'
+import { languageServiceCapabilities } from '@cross-css/native'
 const { Project, canonicalUri } = projectModule
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'crossbreeze-test-'))
@@ -12,6 +13,26 @@ function fixture() {
   return { root, put }
 }
 const pos = (source, name) => ({ line: 0, character: source.indexOf(name) })
+
+test('XCSS binding usage highlighting follows aliases and scope in TSX', () => {
+  const { root, put } = fixture()
+  put('tsconfig.json', '{"compilerOptions":{"jsx":"preserve"}}')
+  put('theme.xcss', '.hello {} @vars { @provided --width: length; }')
+  const text = `import { styles as classes, cssVars } from './theme.xcss';
+import { ordinary } from './ordinary';
+const view = <div xClass={[classes.hello]} xVars={{[cssVars.width]: 12}} />;
+function local(classes: any, cssVars: any) { return [classes.hello, cssVars.width]; }
+const object = { classes: 1, cssVars: 2 }; ordinary;`;
+  const uri = put('app.tsx', text)
+  const project = new Project([root])
+  project.initialize()
+  const type = languageServiceCapabilities().tokenTypes.indexOf('xcssImport')
+  const tokens = project.typescriptQuery('tokens', { uri }).filter(token => token.tokenType === type)
+  assert.deepEqual(tokens.filter(token => token.line > 0).map(token => [token.line, token.character, token.length]), [
+    [2, text.split('\n')[2].indexOf('classes'), 7],
+    [2, text.split('\n')[2].indexOf('cssVars'), 7],
+  ])
+})
 
 test('CSS validation is queried separately and isolated documents use their own service', () => {
   const { root, put } = fixture()

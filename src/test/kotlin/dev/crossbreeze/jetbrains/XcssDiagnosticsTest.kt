@@ -94,7 +94,9 @@ class XcssDiagnosticsTest : BasePlatformTestCase() {
                 expectedTokens.all { (key, tokens) ->
                     highlights.filter { it.forcedTextAttributesKey == key }
                         .map { editor.document.text.substring(it.startOffset, it.endOffset) }.toSet() == tokens
-                }
+                } && highlights.filter { it.forcedTextAttributesKey == XcssColors.TS_IMPORT }
+                    .map { it.startOffset }.toSet() == Regex("\\b(styles|cssVars)\\b").findAll(editor.document.text)
+                    .map { it.range.first }.toSet()
             }, 10)
             editor.caretModel.moveToOffset(editor.document.text.indexOf("styles") + 2)
             myFixture.performEditorAction(IdeActions.ACTION_GOTO_DECLARATION)

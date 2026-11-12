@@ -149,8 +149,8 @@ test('stylesheet symbols cross TypeScript projects with unsaved edits and precis
   }
   assert.deepEqual(tokens, [
     ['xcssImport', 'styles'], ['xcssImport', 'cssVars'], ['xcssImport', 'vars'],
-    ['xcssImport', 'Variants'], ['xcssImport', 'V'], ['xcssClassMember', 'primary'],
-    ['xcssProvidedVariable', 'buttonWidth'], ['xcssProvidedVariable', 'gap'],
+    ['xcssImport', 'Variants'], ['xcssImport', 'V'], ['xcssImport', 'styles'], ['xcssClassMember', 'primary'],
+    ['xcssImport', 'vars'], ['xcssProvidedVariable', 'buttonWidth'], ['xcssImport', 'vars'], ['xcssProvidedVariable', 'gap'],
   ])
   assert.deepEqual(new Set((await refs(member)).map(result => result.uri.split('/').at(-1))), new Set(['open.ts', 'closed.ts']))
   assert.equal((await refs(value, true)).length, 3)

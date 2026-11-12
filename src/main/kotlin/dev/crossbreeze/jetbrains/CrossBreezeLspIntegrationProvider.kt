@@ -97,12 +97,16 @@ internal class CrossBreezeDescriptor(project: Project, private val root: Path) :
     }
     override fun getWorkspaceConfiguration(item: ConfigurationItem): Any? {
         if (item.section == "crossbreeze.typescriptProject") {
-            return ReadAction.computeBlocking<String?, RuntimeException> {
-                val file = item.scopeUri?.let { findFileByUri(it) } ?: return@computeBlocking null
-                if (file.extension !in typescriptExtensions || !isProjectSource(project, file)) return@computeBlocking null
-                val config = project.service<TypeScriptConfigService>().getPreferableOrParentConfig(file)
-                config?.takeUnless { it.isJSConfig }?.configFile?.toNioPath()?.toUri()?.toString()
-            }
+            // LSP configuration callbacks have no progress context. The TypeScript
+            // config graph may initialize lazily and requires one even off the EDT.
+            return com.intellij.openapi.progress.ProgressManager.getInstance().runProcess<String?>({
+                ReadAction.computeBlocking<String?, RuntimeException> {
+                    val file = item.scopeUri?.let { findFileByUri(it) } ?: return@computeBlocking null
+                    if (file.extension !in typescriptExtensions || !isProjectSource(project, file)) return@computeBlocking null
+                    val config = project.service<TypeScriptConfigService>().getPreferableOrParentConfig(file)
+                    config?.takeUnless { it.isJSConfig }?.configFile?.toNioPath()?.toUri()?.toString()
+                }
+            }, com.intellij.openapi.progress.EmptyProgressIndicator())
         }
         if (item.section != "crossbreeze.formatting") return null
         return ReadAction.computeBlocking<Any?, RuntimeException> {

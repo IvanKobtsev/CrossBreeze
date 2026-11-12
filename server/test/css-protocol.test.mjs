@@ -23,9 +23,10 @@ async function client(t, initializationOptions = {}, configure) {
       const message = JSON.parse(buffer.subarray(split + 4, split + 4 + length).toString())
       buffer = buffer.subarray(split + 4 + length)
       if (message.method === 'workspace/configuration' && configure) {
-        const result = message.params.items.map(configure)
-        const body = JSON.stringify({ jsonrpc: '2.0', id: message.id, result })
-        child.stdin.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`)
+        void Promise.all(message.params.items.map(configure)).then(result => {
+          const body = JSON.stringify({ jsonrpc: '2.0', id: message.id, result })
+          child.stdin.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`)
+        })
       } else if (message.id !== undefined) { requests.get(message.id)?.(message); requests.delete(message.id) }
       else { notifications.push(message); for (const listener of [...listeners]) listener(message) }
     }
@@ -205,4 +206,28 @@ test('TypeScript diagnostics use the selected project and live stylesheets', { t
   pending = c.diagnostic(app, undefined, ds => ds.length === 0)
   c.send('textDocument/didClose', { textDocument: { uri: app } })
   assert.deepEqual(await pending, [])
+})
+
+test('slow configuration coalesces diagnostic passes and publishes the newest xVars edit', { timeout: 20000 }, async t => {
+  let active = 0, maximum = 0
+  const c = await client(t, {}, async item => {
+    active++
+    maximum = Math.max(maximum, active)
+    await new Promise(resolve => setTimeout(resolve, 450))
+    active--
+    return pathToFileURL(join(c.root, 'tsconfig.app.json')).href
+  })
+  writeFileSync(join(c.root, 'tsconfig.app.json'), '{"compilerOptions":{"strict":true,"jsx":"preserve"},"files":["app.tsx"]}')
+  writeFileSync(join(c.root, 'theme.xcss'), '@vars { @provided --width: length; } .button {}')
+  const uri = pathToFileURL(join(c.root, 'app.tsx')).href
+  const source = value => `import { styles, cssVars } from './theme.xcss'; declare global { namespace JSX { interface IntrinsicElements { div: any } } } <div xClass={styles.button} xVars={{ [cssVars.width]: '${value}' }} />;`
+  c.open(uri, source('2%'), 'typescriptreact')
+  for (let version = 2; version <= 8; version++) {
+    await new Promise(resolve => setTimeout(resolve, 180))
+    c.edit(uri, version, source('2%'))
+  }
+  const pending = c.diagnostic(uri, 9, ds => ds.length === 0)
+  c.edit(uri, 9, source('2px'))
+  await pending
+  assert.equal(maximum, 1, 'configuration requests must not accumulate during edits')
 })
