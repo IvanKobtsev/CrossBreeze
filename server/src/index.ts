@@ -1,12 +1,11 @@
 import { Worker } from 'node:worker_threads'
-import { basename, dirname, join, resolve } from 'node:path'
-import { existsSync } from 'node:fs'
+import { basename, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createConnection, TextDocuments, TextDocumentSyncKind, ResponseError, LSPErrorCodes, ErrorCodes, DiagnosticSeverity, CompletionItemKind, type CancellationToken, type Position, type InitializeParams } from 'vscode-languageserver/node.js'
 import { TextDocument } from 'vscode-languageserver-textdocument'
 import { watch, type FSWatcher } from 'chokidar'
 import { languageServiceCapabilities, type EditorCompletion, type EditorDefinitionDetails, type EditorDiagnostic, type EditorDocument, type EditorExportedSymbol, type EditorHover, type EditorLocation, type SemanticToken } from '@cross-css/native'
-import { canonicalUri, isExcludedPath, type Aliases } from './project.js'
+import { assetWatchRoots, canonicalUri, isExcludedPath, type Aliases } from './project.js'
 import { defaultCssValidation, type CssValidationOptions } from './css-validation.js'
 import { colorPresentation } from './css-values.js'
 import type { ColorInformation, DefinitionLink } from 'vscode-languageserver'
@@ -34,11 +33,9 @@ worker.on('message', ({ id, result, error, warning, watchPaths, typescriptWatchP
       const next = new Set<string>(assetWatchPaths)
       watchedAssetPaths = next
       // Watching a nonexistent leaf alone does not reliably observe newly created parents.
-      const roots = new Set<string>(assetWatchPaths.map((path: string) => {
-        let parent = dirname(path)
-        while (!existsSync(parent) && dirname(parent) !== parent) parent = dirname(parent)
-        return parent
-      }))
+      // Do not replace an active parent subscription with a newly created child:
+      // unwatch(parent) marks its descendants ignored, suppressing later events.
+      const roots = assetWatchRoots(assetWatchPaths, watchedAssetRoots)
       void assetWatcher.unwatch([...watchedAssetRoots].filter(path => !roots.has(path)))
       assetWatcher.add([...roots].filter(path => !watchedAssetRoots.has(path)))
       watchedAssetRoots = roots

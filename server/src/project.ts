@@ -35,6 +35,20 @@ export function canonicalUri(value: string): string {
   return pathToFileURL(path).href
 }
 export type Aliases = Record<string, string[]>
+/** Keep covering parents subscribed while referenced children appear or disappear. */
+export function assetWatchRoots(paths: string[], previous: Set<string>): Set<string> {
+  const covers = (root: string, path: string) => {
+    const rel = relative(root, path)
+    return rel === '' || rel !== '..' && !rel.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) && !isAbsolute(rel)
+  }
+  const roots = new Set([...previous].filter(root => paths.some(path => covers(root, path))))
+  for (const path of paths) {
+    let parent = dirname(path)
+    while (!existsSync(parent) && dirname(parent) !== parent) parent = dirname(parent)
+    roots.add(parent)
+  }
+  return roots
+}
 interface Paths { base: string; paths: Aliases }
 interface Entry { text: string; revision: number }
 

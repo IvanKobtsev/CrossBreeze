@@ -5,7 +5,22 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import projectModule from '../out/project.cjs'
-const { Project, canonicalUri } = projectModule
+const { Project, canonicalUri, assetWatchRoots } = projectModule
+
+test('asset watch subscriptions retain their parent when missing directories appear', () => {
+  const root = mkdtempSync(join(tmpdir(), 'crossbreeze-watch-roots-'))
+  const asset = join(root, 'images', 'icon.png')
+  const initial = assetWatchRoots([asset], new Set())
+  assert(initial.has(root))
+  mkdirSync(dirname(asset))
+  writeFileSync(asset, '')
+  const created = assetWatchRoots([asset], initial)
+  assert(created.has(root), 'Creating a directory must not unsubscribe its active parent watcher')
+  assert(created.has(dirname(asset)))
+  unlinkSync(asset)
+  assert.deepEqual(assetWatchRoots([asset], created), created)
+  assert.equal(assetWatchRoots([], created).size, 0, 'Unreferenced roots must still be removed')
+})
 
 function fixture(aliases = {}) {
   const root = mkdtempSync(join(tmpdir(), 'crossbreeze-assets-'))
