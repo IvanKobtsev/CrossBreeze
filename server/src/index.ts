@@ -1,5 +1,6 @@
 import { Worker } from 'node:worker_threads'
-import { basename, join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
+import { existsSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createConnection, TextDocuments, TextDocumentSyncKind, ResponseError, LSPErrorCodes, ErrorCodes, DiagnosticSeverity, CompletionItemKind, type CancellationToken, type Position, type InitializeParams } from 'vscode-languageserver/node.js'
 import { TextDocument } from 'vscode-languageserver-textdocument'
@@ -27,7 +28,23 @@ let pending = new Map<number, { resolve: (value: any) => void; reject: (error: E
 function call<T>(method: string, ...args: unknown[]): Promise<T> {
   return new Promise((resolve, reject) => { const id = ++nextId; pending.set(id, { resolve, reject }); worker.postMessage({ id, method, args }) })
 }
-worker.on('message', ({ id, result, error, warning, watchPaths, typescriptWatchPaths }) => {
+worker.on('message', ({ id, result, error, warning, watchPaths, typescriptWatchPaths, assetWatchPaths }) => {
+  if (assetWatchPaths) {
+    if (assetWatcher && !shutdown) {
+      const next = new Set<string>(assetWatchPaths)
+      watchedAssetPaths = next
+      // Watching a nonexistent leaf alone does not reliably observe newly created parents.
+      const roots = new Set<string>(assetWatchPaths.map((path: string) => {
+        let parent = dirname(path)
+        while (!existsSync(parent) && dirname(parent) !== parent) parent = dirname(parent)
+        return parent
+      }))
+      void assetWatcher.unwatch([...watchedAssetRoots].filter(path => !roots.has(path)))
+      assetWatcher.add([...roots].filter(path => !watchedAssetRoots.has(path)))
+      watchedAssetRoots = roots
+    }
+    return
+  }
   if (watchPaths) { watcher?.add(watchPaths); return }
   if (typescriptWatchPaths) { watchTypescriptPaths(typescriptWatchPaths); return }
   if (warning) { connection.console.warn(warning); return }
@@ -40,6 +57,9 @@ worker.on('error', error => { for (const item of pending.values()) item.reject(e
 worker.on('exit', code => { if (!shutdown) { for (const item of pending.values()) item.reject(new Error(`Analysis worker exited (${code})`)); pending.clear(); process.exitCode = 1; connection.dispose() } })
 let ready: Promise<unknown> = Promise.resolve()
 let watcher: FSWatcher | undefined
+let assetWatcher: FSWatcher | undefined
+let watchedAssetPaths = new Set<string>()
+let watchedAssetRoots = new Set<string>()
 let typescriptWatcher: FSWatcher | undefined
 let watchedTypescriptPaths = new Set<string>()
 let timer: ReturnType<typeof setTimeout> | undefined
@@ -159,6 +179,21 @@ connection.onInitialize((params: InitializeParams) => {
   }
   const roots = (params.workspaceFolders?.map(folder => folder.uri) ?? (params.rootUri ? [params.rootUri] : [])).filter(uri => uri.startsWith('file:')).map(uri => fileURLToPath(canonicalUri(uri)))
   ready = call('initialize', roots, options.aliases ?? {}, options.excludedRoots ?? [])
+  assetWatcher = watch([], { ignoreInitial: true, followSymlinks: false, ignored: path => {
+    const normalize = (path: string) => {
+      const normalized = resolve(path).replaceAll('\\', '/')
+      return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+    }
+    const current = normalize(path)
+    return ![...watchedAssetPaths].some(candidate => {
+      const target = normalize(candidate)
+      return target === current || target.startsWith(current + '/')
+    })
+  } })
+  assetWatcher.on('all', (event, path) => {
+    if (['add', 'change', 'unlink', 'addDir', 'unlinkDir'].includes(event)) diskChanged(path)
+  })
+  assetWatcher.on('error', error => connection.console.warn(`CrossBreeze asset watcher: ${String(error)}`))
   watcher = watch(roots, { ignoreInitial: true, followSymlinks: false, ignored: (path, stats) =>
     isExcludedPath(path, roots, options.excludedRoots) || Boolean(stats?.isFile() && !typescriptInput.test(path)),
   })
@@ -384,7 +419,7 @@ connection.languages.semanticTokens.on(async (params, token) => {
 connection.onShutdown(async () => {
   shutdown = true
   clearTimeout(timer)
-  await Promise.all([watcher?.close(), typescriptWatcher?.close()])
+  await Promise.all([watcher?.close(), typescriptWatcher?.close(), assetWatcher?.close()])
   await worker.terminate()
 })
 connection.onExit(() => { shutdown = true; void worker.terminate() })

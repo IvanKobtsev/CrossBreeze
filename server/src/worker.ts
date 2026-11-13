@@ -33,6 +33,7 @@ parentPort!.on('message', ({ id, method, args }) => {
     else if (method === 'configure') project.configure(args[0] as Aliases)
     else result = project.query(method, args[0], args[1], args[2])
     if (['initialize', 'update', 'close', 'change', 'configure'].includes(method)) parentPort!.postMessage({ watchPaths: project.watchPaths() })
+    parentPort!.postMessage({ assetWatchPaths: project?.assetWatchPaths() ?? [] })
     parentPort!.postMessage({ id, result })
   } catch (error) { parentPort!.postMessage({ id, error: String(error) }) }
 })

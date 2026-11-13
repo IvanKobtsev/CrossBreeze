@@ -47,6 +47,19 @@ class XcssNavigationHandler : GotoDeclarationHandler {
         catch (_: Exception) { return null }
         if (document.modificationStamp != stamp) return null
         val targets = locations ?: return null
+        // Asset definitions point to the file itself; binary files have no PSI document.
+        val asset = targets.singleOrNull()?.takeIf {
+            it.range.start.line == 0 && it.range.start.character == 0 && it.range.end == it.range.start
+        }?.let { client.descriptor.findFileByUri(it.uri) }
+        if (asset != null) return arrayOf(object : FakePsiElement() {
+            override fun getParent(): PsiElement = sourceElement
+            override fun getName() = asset.name
+            override fun canNavigate() = true
+            override fun canNavigateToSource() = true
+            override fun navigate(requestFocus: Boolean) {
+                OpenFileDescriptor(file.project, asset).navigate(requestFocus)
+            }
+        })
         val usages = targets.mapNotNull { location ->
             val targetFile = client.descriptor.findFileByUri(location.uri)?.let { PsiManager.getInstance(file.project).findFile(it) } ?: return@mapNotNull null
             val targetDocument = PsiDocumentManager.getInstance(file.project).getDocument(targetFile) ?: return@mapNotNull null

@@ -3,7 +3,8 @@ import { dirname, isAbsolute, join, resolve, relative, extname } from 'node:path
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 import { parse, type ParseError } from 'jsonc-parser'
-import { LanguageService, inspect, type EditorExportedSymbol, type EditorPosition } from '@cross-css/native'
+import { LanguageService, inspect, type EditorExportedSymbol, type EditorPosition, type EditorLocation } from '@cross-css/native'
+import { assetUrls, localAssetPath, publicDirectory } from './assets.js'
 import { inspectValues } from './css-values.js'
 import { languageServiceCapabilities } from '@cross-css/native'
 import { validateCss, type CssValidationOptions } from './css-validation.js'
@@ -45,6 +46,7 @@ export class Project {
   private revisions = new Map<string, number>()
   private configurations = new Map<string, Paths>()
   private requestedPaths = new Set<string>()
+  private assetPaths = new Set<string>()
   private isolated = new Map<string, LanguageService>()
   constructor(readonly roots: string[], public aliases: Aliases = {}, readonly onWarning: (message: string) => void = () => {}, readonly excludedRoots: string[] = []) {
     this.roots = roots.map(root => fileURLToPath(canonicalUri(pathToFileURL(root).href)))
@@ -102,6 +104,7 @@ export class Project {
       let service = this.isolated.get(uri)
       if (!service) this.isolated.set(uri, service = new LanguageService())
       service.setFile(uri, this.revision(uri), text)
+      this.assets(uri)
     }
   }
   close(uri: string, stylesheet = true) {
@@ -120,6 +123,11 @@ export class Project {
     if (!uri.startsWith('file:')) return
     const path = fileURLToPath(uri)
     this.typescript.invalidateDisk()
+    if (this.assetPaths.has(path)) {
+      this.configurations.clear()
+      this.bind()
+      return
+    }
     const excludedPath = isExcludedPath(path, this.roots, this.excludedRoots)
     if (excludedPath && !this.files.has(uri) && !this.requestedPaths.has(path)) return
     if (/^(tsconfig|jsconfig).*\.json$/.test(path.split(/[\\/]/).at(-1) ?? '') || this.configurations.has(path)) {
@@ -132,8 +140,9 @@ export class Project {
   configure(aliases: Aliases) { this.aliases = this.validAliases(aliases); this.configurations.clear(); this.bind() }
   watchPaths() {
     return [...this.files.keys()].filter(uri => uri.startsWith('file:')).map(uri => fileURLToPath(uri))
-      .concat([...this.configurations.keys()], [...this.requestedPaths])
+      .concat([...this.configurations.keys()], [...this.requestedPaths], [...this.assetPaths])
   }
+  assetWatchPaths() { return [...this.assetPaths] }
   typescriptWatchPaths() { return this.typescript.watchPaths() }
   typescriptClassWarnings(targets: TypescriptTarget[]) {
     return this.typescript.classWarnings(targets, this.open, this.files, (uri, specifier) => this.resolve(uri, specifier))
@@ -157,7 +166,11 @@ export class Project {
 
     uri = canonicalUri(uri)
     const service = this.isolated.get(uri) ?? this.service
-    return [...service.classWarnings(uri).map(w => ({ ...w, source: 'XCSS', severity: 2 as const })), ...(options.checkCssProperties || options.checkCssValues ? validateCss(service.cssDeclarations(uri), options, this.onWarning) : [])]
+    const assets = this.assets(uri).filter(asset => asset.path !== undefined && !asset.target).map(asset => ({
+      range: asset.range, source: 'XCSS', code: 'asset.not-found', severity: 1 as const,
+      message: `Cannot resolve asset '${asset.value}'.`,
+    }))
+    return [...assets, ...service.classWarnings(uri).map(w => ({ ...w, source: 'XCSS', severity: 2 as const })), ...(options.checkCssProperties || options.checkCssValues ? validateCss(service.cssDeclarations(uri), options, this.onWarning) : [])]
   }
   private validAliases(value: unknown): Aliases {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
@@ -223,9 +236,9 @@ export class Project {
     }
     return undefined
   }
-  private resolve(importer: string, specifier: string) {
+  private resolve(importer: string, specifier: string, target = (path: string) => this.target(path), asset = false) {
     const path = fileURLToPath(importer)
-    if (specifier.startsWith('.') || isAbsolute(specifier)) return this.target(resolve(dirname(path), specifier))
+    if (specifier.startsWith('.') || isAbsolute(specifier)) return target(resolve(dirname(path), specifier))
     const config = this.nearest(path)
     const root = this.roots.find(root => { const rel = relative(root, path); return !rel.startsWith('..') && !isAbsolute(rel) }) ?? dirname(path)
     const rules = [
@@ -238,15 +251,49 @@ export class Project {
     if (rule) {
       const [prefix, suffix = ''] = rule.key.split('*')
       const capture = rule.key.includes('*') ? specifier.slice(prefix.length, specifier.length - suffix.length) : ''
-      for (const value of rule.values) { const target = this.target(resolve(rule.base, value.replace('*', capture))); if (target) return target }
+      for (const value of rule.values) { const found = target(resolve(rule.base, value.replace('*', capture))); if (found) return found }
       return undefined
     }
-    return this.target(resolve(config.base, specifier))
+    return target(resolve(asset ? dirname(path) : config.base, specifier))
+  }
+  private assets(uri: string) {
+    if (!uri.startsWith('file:')) return []
+    const service = this.isolated.get(uri) ?? this.service
+    return assetUrls(service.cssValues(uri)).map(asset => {
+      let path = localAssetPath(asset.value)
+      let target: string | undefined
+      const exact = (path: string) => {
+        const uri = canonicalUri(pathToFileURL(path).href)
+        this.assetPaths.add(fileURLToPath(uri))
+        try { if (statSync(path).isFile()) return uri } catch { /* Missing assets remain watched. */ }
+        return undefined
+      }
+      if (path?.startsWith('/')) {
+        const directory = publicDirectory(fileURLToPath(uri), this.roots, path => {
+          this.assetPaths.add(fileURLToPath(canonicalUri(pathToFileURL(path).href)))
+          const overlay = this.open.get(canonicalUri(pathToFileURL(path).href))
+          if (overlay) return overlay.text
+          try { return readFileSync(path, 'utf8') } catch { return undefined }
+        })
+        if (directory === undefined) path = undefined
+        else target = exact(resolve(directory, '.' + path))
+      } else if (path !== undefined) target = this.resolve(uri, path, exact, true)
+      return { ...asset, path, target }
+    })
+  }
+  private assetDefinition(uri: string, position: EditorPosition): { origin: import('@cross-css/native').EditorRange; targets: EditorLocation[] } | undefined {
+    const compare = (a: EditorPosition, b: EditorPosition) => a.line - b.line || a.character - b.character
+    const asset = this.assets(uri).find(asset => compare(position, asset.range.start) >= 0 && compare(position, asset.range.end) < 0)
+    if (!asset) return undefined
+    const zero = { line: 0, character: 0 }
+    return { origin: asset.range, targets: asset.target ? [{ uri: asset.target, range: { start: zero, end: zero } }] : [] }
   }
   private bind() {
     this.requestedPaths.clear()
+    this.assetPaths.clear()
     // Dependencies loaded during iteration are included in the same binding pass.
     for (const [uri, entry] of this.files) {
+      this.assets(uri)
       for (const specifier of inspect(entry.text).imports) {
         const target = this.resolve(uri, specifier)
         if (target && !this.files.has(target)) {
@@ -256,6 +303,7 @@ export class Project {
         this.service.setResolution(uri, specifier, target)
       }
     }
+    for (const uri of this.isolated.keys()) this.assets(uri)
   }
   query(method: string, uri: string, position?: { line: number; character: number }, includeDeclaration = false) {
     uri = canonicalUri(uri)
@@ -270,10 +318,12 @@ export class Project {
       }
       case 'colors': return inspectValues(service.cssValues(uri), languageServiceCapabilities().tokenTypes).colors
       case 'definitionLinks': {
+        const asset = this.assetDefinition(uri, position!)
+        if (asset) return asset.targets.map(target => ({ originSelectionRange: asset.origin, targetUri: target.uri, targetRange: target.range, targetSelectionRange: target.range }))
         const origin = service.hover(uri, position!)?.range
         return service.definition(uri, position!).map(target => ({ originSelectionRange: origin, targetUri: target.uri, targetRange: target.range, targetSelectionRange: target.range }))
       }
-      case 'definition': return service.definition(uri, position!)
+      case 'definition': return this.assetDefinition(uri, position!)?.targets ?? service.definition(uri, position!)
       case 'navigationKind': {
         const token = service.document(uri).tokens.find(token => token.line === position!.line && token.character <= position!.character && position!.character < token.character + token.length)
         if (!token) return 'definitions'

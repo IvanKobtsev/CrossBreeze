@@ -1,9 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 async function client(t, initializationOptions = {}, configure) {
@@ -61,6 +61,30 @@ async function client(t, initializationOptions = {}, configure) {
   const edit = (uri, version, text) => send('textDocument/didChange', { textDocument: { uri, version }, contentChanges: [{ text }] })
   return { root, uri, send, request, diagnostic, open, edit, notifications }
 }
+
+test('asset navigation and diagnostics follow live filesystem and unsaved URL edits', { timeout: 20000 }, async t => {
+  const c = await client(t, { checkCssProperties: false, checkCssValues: false })
+  const asset = join(c.root, 'images', 'icon.png')
+  const text = '.a { background: url("./images/icon.png?raw#icon"); }'
+  const source = { textDocument: { uri: c.uri }, position: { line: 0, character: text.indexOf('./images') } }
+  const missing = c.diagnostic(c.uri, 1, diagnostics => diagnostics.some(d => d.code === 'asset.not-found'))
+  c.open(c.uri, text)
+  assert.equal((await missing).find(d => d.code === 'asset.not-found').severity, 1)
+  const resolved = c.diagnostic(c.uri, 1, diagnostics => !diagnostics.some(d => d.code === 'asset.not-found'))
+  mkdirSync(dirname(asset), { recursive: true })
+  writeFileSync(asset, Buffer.from([137, 80, 78, 71]))
+  await resolved
+  const definitions = (await c.request('textDocument/definition', source)).result
+  assert.equal(definitions.length, 1)
+  assert(definitions[0].uri.endsWith('/images/icon.png'))
+  assert.deepEqual((await c.request('crossbreeze/navigation', source)).result, definitions)
+  const deleted = c.diagnostic(c.uri, 1, diagnostics => diagnostics.some(d => d.code === 'asset.not-found'))
+  unlinkSync(asset)
+  await deleted
+  const clean = c.diagnostic(c.uri, 2, diagnostics => !diagnostics.some(d => d.code === 'asset.not-found'))
+  c.edit(c.uri, 2, '.a { background: url(https://example.com/icon.png); }')
+  await clean
+})
 
 test('CSS warnings merge with XCSS, map typed values, clear on correction and honor settings', { timeout: 20000 }, async t => {
   const c = await client(t)
