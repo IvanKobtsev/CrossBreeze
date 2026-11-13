@@ -19,6 +19,7 @@ parentPort!.on('message', ({ id, method, args }) => {
       result = project.typescriptDiagnostics(args[0])
       parentPort!.postMessage({ typescriptWatchPaths: project.typescriptWatchPaths() })
     }
+    else if (method === 'typescriptClassWarnings') result = project.typescriptClassWarnings(args[0])
     else if (method === 'typescriptSources') result = project.typescriptSources()
     else if (method === 'typescriptQuery' || method === 'editorReferences') {
       result = method === 'typescriptQuery'

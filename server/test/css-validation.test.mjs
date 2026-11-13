@@ -21,7 +21,7 @@ test('property and value typos; valid CSS, custom properties and important', () 
     ...['flex', 'inherit', 'initial', 'revert-layer', 'flex !important', 'flex ! /*comment*/ IMPORTANT'].map(value => declaration('display', [literal(value)])),
     declaration('--anything', [literal('any tokens go here')]),
   ])
-  assert.deepEqual(results.map(d => d.code), ['css.unknown-property', 'css.invalid-value'])
+  assert.deepEqual(results.map(d => warningType(d)), ['css.unknown-property', 'css.invalid-value'])
   assert.deepEqual(results[1].range, range(10, 13))
 })
 test('typed checks hide representatives and follow broad type policy', () => {
@@ -30,7 +30,7 @@ test('typed checks hide representatives and follow broad type policy', () => {
     declaration('z-index', [typed('number')]), declaration('width', [typed('length')]),
   ])
   assert.equal(results.length, 1)
-  assert.equal(results[0].code, 'css.type-mismatch')
+  assert.equal(warningType(results[0]), 'css.type-mismatch')
   assert.deepEqual(results[0].range, range(11, 15))
   assert.match(results[0].message, /time.*width/)
   assert(!results[0].message.includes('1s'))
@@ -44,7 +44,7 @@ test('mixed values map failures after substitutions without exposing synthetic t
   assert.equal(results.length, 2)
   assert.deepEqual(results[0].range, range(21, 25))
   assert.deepEqual(results[1].range, range(21, 26))
-  assert(results.every(d => d.code === 'css.invalid-value' && !d.message.includes('1s')))
+  assert(results.every(d => warningType(d) === 'css.invalid-value' && !d.message.includes('1s')))
 })
 test('multiline, comments and UTF-16 mapping', () => {
   const results = validate([declaration('display', [literal('/* 😀 */\r\n fex', 10)])])
@@ -62,8 +62,8 @@ test('unknown or unresolved values and native var are skipped', () => {
 })
 test('independent settings and unexpected failures', () => {
   const declarations = [declaration('dispay', []), declaration('display', [literal('fex')])]
-  assert.deepEqual(validate(declarations, { checkCssProperties: false, checkCssValues: true }).map(d => d.code), ['css.invalid-value'])
-  assert.deepEqual(validate(declarations, { checkCssProperties: true, checkCssValues: false }).map(d => d.code), ['css.unknown-property'])
+  assert.deepEqual(validate(declarations, { checkCssProperties: false, checkCssValues: true }).map(d => warningType(d)), ['css.invalid-value'])
+  assert.deepEqual(validate(declarations, { checkCssProperties: true, checkCssValues: false }).map(d => warningType(d)), ['css.unknown-property'])
   const messages = []
   const broken = declaration('display', [])
   Object.defineProperty(broken, 'parts', { get() { throw new Error('synthetic private value') } })
@@ -71,3 +71,10 @@ test('independent settings and unexpected failures', () => {
   assert.equal(messages.length, 1)
   assert(!messages[0].includes('synthetic private value'))
 })
+
+function warningType(d) {
+  assert(!('code' in d), 'advisory warnings must not have diagnostic codes')
+  assert.equal(d.severity, 2)
+  return d.message.startsWith('Unknown CSS property') ? 'css.unknown-property'
+    : d.message.startsWith('A value of type') ? 'css.type-mismatch' : 'css.invalid-value'
+}

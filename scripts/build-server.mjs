@@ -7,5 +7,6 @@ for (const name of ['index', 'worker', 'project', 'css-validation', 'formatting'
   entryPoints: [`server/src/${name}.ts`], outfile: `server/out/${name}.cjs`,
   bundle: true, platform: 'node', target: 'node20', format: 'cjs', sourcemap: true,
   external: ['@cross-css/native'],
-  alias: { 'jsonc-parser': 'jsonc-parser/lib/esm/main.js', 'css-tree': require.resolve('css-tree') },
+  packages: 'bundle',
+  alias: { '@cross-css/native/css-validation.cjs': require.resolve('@cross-css/native/css-validation.cjs'), 'jsonc-parser': 'jsonc-parser/lib/esm/main.js', 'css-tree': require.resolve('css-tree') },
 })

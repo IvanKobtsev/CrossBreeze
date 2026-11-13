@@ -27,6 +27,8 @@
     <colorSettingsPage implementation="dev.crossbreeze.jetbrains.XcssColorSettingsPage"/>
     <langCodeStyleSettingsProvider implementation="dev.crossbreeze.jetbrains.XcssCodeStyleProvider"/>
     <platform.lsp.integrationProvider implementation="dev.crossbreeze.jetbrains.CrossBreezeLspIntegrationProvider"/>
+    <gotoDeclarationHandler implementation="dev.crossbreeze.jetbrains.XcssNavigationHandler" order="first"/>
+    <usageSearcher implementation="dev.crossbreeze.jetbrains.XcssNavigationUsageSearcher"/>
     <projectConfigurable id="dev.crossbreeze.settings" displayName="CrossBreeze" instance="dev.crossbreeze.jetbrains.CrossBreezeConfigurable"/>
     <notificationGroup id="CrossBreeze" displayType="BALLOON"/>
     <statusBarWidgetFactory id="CrossBreeze" implementation="dev.crossbreeze.jetbrains.CrossBreezeStatusWidgetFactory"/>

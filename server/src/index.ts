@@ -92,6 +92,7 @@ async function publishCurrent() {
   await ready
   if (generation !== epoch || shutdown) return
   const entries = [...open]
+  const stylesheetResults = new Map<string, { document: OpenDocument; diagnostics: EditorDiagnostic[]; cssDiagnostics: Diagnostic[] }>()
   for (const [uri, document] of entries) {
     if (!document.stylesheet) continue
     const diagnostics = await call<EditorDiagnostic[]>('diagnostics', uri)
@@ -100,17 +101,25 @@ async function publishCurrent() {
       return []
     })
     if (generation !== epoch || shutdown) return
-    sendDiagnostics(document, diagnostics, cssDiagnostics)
+    stylesheetResults.set(uri, { document, diagnostics, cssDiagnostics })
   }
   const typescript = entries.filter(([, document]) => document.typescript)
   const targets = await typescriptTargets(typescript.map(([, document]) => document.uri))
   if (generation !== epoch || shutdown) return
-  if (!typescript.length && !watchedTypescriptPaths.size) return
+  if (!typescript.length && !watchedTypescriptPaths.size) {
+    for (const value of stylesheetResults.values()) sendDiagnostics(value.document, value.diagnostics, value.cssDiagnostics)
+    return
+  }
   const results = await call<Map<string, EditorDiagnostic[]>>('typescriptDiagnostics', targets).catch(error => {
     failed(error)
     return new Map<string, EditorDiagnostic[]>()
   })
   if (generation !== epoch || shutdown) return
+  const classWarnings = await call<Map<string, import('@cross-css/native').EditorWarning[]>>('typescriptClassWarnings', targets)
+  if (generation !== epoch || shutdown) return
+  for (const [uri, value] of stylesheetResults) sendDiagnostics(value.document, value.diagnostics, [
+    ...value.cssDiagnostics, ...(classWarnings.get(uri) ?? []).map(w => ({ ...w, source: 'XCSS', severity: DiagnosticSeverity.Warning })),
+  ])
   for (const [uri, document] of typescript) sendDiagnostics(document, results.get(uri) ?? [])
 }
 function sendDiagnostics(document: OpenDocument, nativeDiagnostics: EditorDiagnostic[], cssDiagnostics: Diagnostic[] = []) {
@@ -299,6 +308,35 @@ connection.onReferences((params, token) => currentQuery(token, async check => {
     unique.set(key, { uri: editorUri(uri), range })
   }
   return [...unique.values()]
+}))
+// Click navigation has a narrower scope than explicit Find Usages.
+connection.onRequest('crossbreeze/navigation', (params: { textDocument: { uri: string }; position: Position }, token) => currentQuery(token, async check => {
+  const { textDocument: { uri }, position } = params
+  const kind = isTypescript(uri) ? 'definitions' : await call<string>('navigationKind', canonicalUri(uri), position)
+  check()
+  let locations: EditorLocation[]
+  if (kind === 'definitions') {
+    locations = isTypescript(uri)
+      ? (await typescriptQuery<EditorDefinitionDetails | null>('definition', uri, position, check))?.targets ?? []
+      : await call<EditorLocation[]>('definition', canonicalUri(uri), position)
+  } else if (kind === 'classUsages') {
+    const symbols = await call<EditorExportedSymbol[]>('symbols', canonicalUri(uri), position)
+    const sources = await call<string[]>('typescriptSources')
+    const targets = await typescriptTargets(sources)
+    check()
+    locations = await call<EditorLocation[]>('editorReferences', symbols, targets, false)
+    locations = locations.filter(location => isTypescript(location.uri))
+  } else {
+    locations = await call<EditorLocation[]>('references', canonicalUri(uri), position, false)
+    // Some engine symbols report their declaration even with includeDeclaration=false.
+    const declarations = await call<EditorLocation[]>('definition', canonicalUri(uri), position)
+    locations = locations.filter(location => !declarations.some(declaration => canonicalUri(declaration.uri) === canonicalUri(location.uri) && JSON.stringify(declaration.range) === JSON.stringify(location.range)))
+  }
+  check()
+  return [...new Map(locations.map(location => {
+    const mapped = { ...location, uri: editorUri(location.uri) }
+    return [JSON.stringify(mapped), mapped]
+  })).values()]
 }))
 connection.onHover(async (params, token) => {
   const hover = await query<EditorHover | null>('hover', params.textDocument.uri, token, params.position)

@@ -39,9 +39,9 @@ test('CSS validation is queried separately and isolated documents use their own 
   const app = put('app.xcss', '.a { display: fex; }')
   const project = new Project([root])
   project.initialize()
-  assert.equal(project.cssDiagnostics(app, { checkCssProperties: true, checkCssValues: true })[0].code, 'css.invalid-value')
+  assert.equal(warningType(project.cssDiagnostics(app, { checkCssProperties: true, checkCssValues: true })[0]), 'css.invalid-value')
   project.update('untitled:isolated', '.a { dispay: flex; }', 1)
-  assert.equal(project.cssDiagnostics('untitled:isolated', { checkCssProperties: true, checkCssValues: true })[0].code, 'css.unknown-property')
+  assert.equal(warningType(project.cssDiagnostics('untitled:isolated', { checkCssProperties: true, checkCssValues: true })[0]), 'css.unknown-property')
   project.service.cssDeclarations = () => { throw new Error('must not run for navigation or semantic tokens') }
   assert(project.query('document', app).tokens.length)
   assert.deepEqual(project.query('definition', app, { line: 0, character: 0 }), [])
@@ -113,3 +113,10 @@ test('inherited config edits and excluded-root events refresh only project sourc
   project.change(ignored)
   assert(!project.files.has(ignored))
 })
+
+function warningType(d) {
+  assert(!('code' in d), 'advisory warnings must not have diagnostic codes')
+  assert.equal(d.severity, 2)
+  return d.message.startsWith('Unknown CSS property') ? 'css.unknown-property'
+    : d.message.startsWith('A value of type') ? 'css.type-mismatch' : 'css.invalid-value'
+}

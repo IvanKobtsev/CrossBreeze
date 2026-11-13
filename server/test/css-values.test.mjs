@@ -14,7 +14,7 @@ test('reported gradient and malformed dimension typos produce precise diagnostic
   const {service} = analyze('$x = 20px; .a { mask-image: linear-gradient(90deg,black (100% - 350px),transprent 100%); width: 10ss0%; background: linear-gradient(red ($x + 2px),blue); }')
   const diagnostics = validateCss(service.cssDeclarations('file:///test.xcss'))
   assert.equal(diagnostics.length, 2)
-  assert(diagnostics.every(d => d.code === 'css.invalid-value'))
+  assert(diagnostics.every(d => warningType(d) === 'css.invalid-value'))
   assert.equal(diagnostics[0].range.end.character - diagnostics[0].range.start.character, 'transprent'.length)
 })
 test('CSS functions, contextual keywords, colors and symbol priority', () => {
@@ -68,3 +68,10 @@ test('multiline color functions do not recolor numeric arguments or comments', (
   const color=tokens.find(t=>languageServiceCapabilities().tokenTypes[t.tokenType]==='cssColor')
   assert.equal(color.length,3)
 })
+
+function warningType(d) {
+  assert(!('code' in d), 'advisory warnings must not have diagnostic codes')
+  assert.equal(d.severity, 2)
+  return d.message.startsWith('Unknown CSS property') ? 'css.unknown-property'
+    : d.message.startsWith('A value of type') ? 'css.type-mismatch' : 'css.invalid-value'
+}

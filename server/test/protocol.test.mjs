@@ -131,6 +131,20 @@ test('stylesheet symbols cross TypeScript projects with unsaved edits and precis
   const classLinks = (await request('textDocument/definition', styles)).result
   assert.deepEqual(classLinks.map(link => link.targetSelectionRange.start), [{ line: 0, character: 1 }, { line: 3, character: 1 }])
   assert.deepEqual(classLinks[0].originSelectionRange.start, styles.position)
+  const navigate = async source => {
+    const response = await request('crossbreeze/navigation', source)
+    assert(!response.error, JSON.stringify(response.error))
+    return response.result
+  }
+  assert.deepEqual((await navigate(styles)).map(location => location.range.start), classLinks.map(link => link.targetSelectionRange.start))
+  assert.deepEqual((await navigate(member)).map(location => location.range.start), [{ line: 0, character: 1 }, { line: 3, character: 1 }])
+  const classUsages = await navigate(params('theme.xcss', 0, 1))
+  assert.equal(classUsages.length, 1)
+  assert.equal(classUsages[0].uri, uri('open.ts'))
+  const animation = '@keyframes fade { from { opacity: 0; } to { opacity: 1; } } .animated { animation: fade 1s; }'
+  open('animation.xcss', 'xcss', animation)
+  const animationUsages = await navigate(params('animation.xcss', 0, animation.indexOf('fade')))
+  assert.deepEqual(animationUsages.map(location => location.range.start.character), [animation.lastIndexOf('fade')])
   const definitions = async (line, character) => (await request('textDocument/definition', params('open.ts', line, character))).result
   assert.deepEqual((await definitions(1, secondLine.indexOf('styles')))[0].targetSelectionRange.start, { line: 0, character: 0 })
   assert.deepEqual((await definitions(1, secondLine.indexOf('V<'))).map(link => link.targetSelectionRange.start.line), [1, 2])

@@ -95,6 +95,7 @@ class Checker {
   }
 
   warning() { return this.service.typescriptProjectWarning() }
+  classWarnings(id: string) { return this.service.classWarnings(id) }
 
   private location(value: EditorLocation): EditorLocation {
     return { ...value, uri: this.inputs.get(value.uri)?.uri ?? pathToFileURL(join(this.anchor!, value.uri)).href }
@@ -382,6 +383,23 @@ export class TypescriptProjects {
     return locations
   }
 
+  classWarnings(targets: TypescriptTarget[], open: OpenInputs, styles: StyleInputs, resolveImport: ResolveImport) {
+    const results = new Map<string, import('@cross-css/native').EditorWarning[]>()
+    for (const [key, { config }] of this.groups(targets)) {
+      try {
+        const { checker, preferred } = this.prepare(key, config, open, styles, resolveImport)
+        if (checker.warning()) continue
+        for (const [uri, id] of preferred) {
+          if (!uri.endsWith('.xcss')) continue
+          const warnings = checker.classWarnings(id).filter(w => w.category === 'unused-class')
+          const previous = results.get(uri)
+          // A use in any selected project is enough to keep the class.
+          results.set(uri, previous ? previous.filter(w => warnings.some(other => other.message === w.message)) : warnings)
+        }
+      } catch (error) { this.report(key, String(error)) }
+    }
+    return results
+  }
   diagnostics(targets: TypescriptTarget[], open: OpenInputs, styles: StyleInputs, resolveImport: ResolveImport) {
     const results = new Map<string, EditorDiagnostic[]>()
     for (const [key, { config, targets: group }] of this.groups(targets)) {

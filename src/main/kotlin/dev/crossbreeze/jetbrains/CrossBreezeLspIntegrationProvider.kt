@@ -56,6 +56,7 @@ private fun isProjectSource(project: Project, file: VirtualFile): Boolean {
 }
 
 internal class CrossBreezeDescriptor(project: Project, private val root: Path) : ProjectWideLspClientDescriptor(project, "CrossBreeze") {
+    override val lsp4jServerClass = CrossBreezeLanguageServer::class.java
     override fun isSupportedFile(file: VirtualFile) = project.service<CrossBreezeSettings>().state.enabled &&
         (file.extension == "xcss" || (file.extension in typescriptExtensions || file.extension == "json") && isProjectSource(project, file))
 

@@ -69,8 +69,8 @@ test('CSS warnings merge with XCSS, map typed values, clear on correction and ho
   c.open(c.uri, text)
   let diagnostics = await pending
   assert(diagnostics.some(d => d.source === 'XCSS' && d.code === 'XC-212'))
-  assert.deepEqual(diagnostics.filter(d => d.source === 'CSS').map(d => d.code), ['css.unknown-property', 'css.invalid-value', 'css.type-mismatch'])
-  assert.equal(diagnostics.find(d => d.code === 'css.type-mismatch').range.start.character, text.lastIndexOf('--duration'))
+  assert.deepEqual(diagnostics.filter(d => d.source === 'CSS').map(d => warningType(d)), ['css.unknown-property', 'css.invalid-value', 'css.type-mismatch'])
+  assert.equal(diagnostics.find(d => d.source === 'CSS' && warningType(d) === 'css.type-mismatch').range.start.character, text.lastIndexOf('--duration'))
   assert(diagnostics.every(d => !d.message.includes('1s') || d.source !== 'CSS'))
   pending = c.diagnostic(c.uri, 2)
   c.edit(c.uri, 2, '.a { display: flex; width: 1px; }')
@@ -79,10 +79,10 @@ test('CSS warnings merge with XCSS, map typed values, clear on correction and ho
   c.send('workspace/didChangeConfiguration', { settings: { crossbreeze: { checkCssProperties: false, checkCssValues: true } } })
   pending = c.diagnostic(c.uri, 3)
   c.edit(c.uri, 3, '.a { dispay: flex; display: fex; }')
-  assert.deepEqual((await pending).filter(d => d.source === 'CSS').map(d => d.code), ['css.invalid-value'])
-  pending = c.diagnostic(c.uri, 3, ds => ds.some(d => d.code === 'css.unknown-property'))
+  assert.deepEqual((await pending).filter(d => d.source === 'CSS').map(d => warningType(d)), ['css.invalid-value'])
+  pending = c.diagnostic(c.uri, 3, ds => ds.some(d => warningType(d) === 'css.unknown-property'))
   c.send('workspace/didChangeConfiguration', { settings: { crossbreeze: { checkCssProperties: true, checkCssValues: false } } })
-  assert.deepEqual((await pending).filter(d => d.source === 'CSS').map(d => d.code), ['css.unknown-property'])
+  assert.deepEqual((await pending).filter(d => d.source === 'CSS').map(d => warningType(d)), ['css.unknown-property'])
   pending = c.diagnostic(c.uri, 3, ds => ds.length === 0)
   c.send('workspace/didChangeConfiguration', { settings: { crossbreeze: { checkCssProperties: false, checkCssValues: false } } })
   assert.deepEqual(await pending, [])
@@ -98,7 +98,7 @@ test('initialization settings, dependency edits, latest unsaved revision and clo
   c.open(c.uri, '@import lib from "./lib"; .a { dispay: flex; @:lib.paint; }')
   c.open(library, source)
   assert(!(await appPending).some(d => d.source === 'CSS'))
-  assert((await libPending).some(d => d.code === 'css.type-mismatch'))
+  assert((await libPending).some(d => warningType(d) === 'css.type-mismatch'))
   appPending = c.diagnostic(c.uri, 1)
   libPending = c.diagnostic(library, 3)
   c.edit(library, 2, '@injection paint($p: color = red) { width: $p; }')
@@ -136,7 +136,7 @@ test('stylesheet diagnostics preserve analyzer metadata and make missing tokens 
     uri: c.uri, range: { start: { line: 0, character: 11 }, end: { line: 0, character: 12 } },
   })
   pending = c.diagnostic(c.uri, 3)
-  c.edit(c.uri, 3, '.valid {}')
+  c.edit(c.uri, 3, '.valid { color: red; }')
   assert.deepEqual(await pending, [])
 })
 
@@ -230,4 +230,29 @@ test('slow configuration coalesces diagnostic passes and publishes the newest xV
   c.edit(uri, 9, source('2px'))
   await pending
   assert.equal(maximum, 1, 'configuration requests must not accumulate during edits')
+})
+function warningType(d) {
+  assert(!('code' in d), 'advisory warnings must not have diagnostic codes')
+  assert.equal(d.severity, 2)
+  return d.message.startsWith('Unknown CSS property') ? 'css.unknown-property'
+    : d.message.startsWith('A value of type') ? 'css.type-mismatch' : 'css.invalid-value'
+}
+test('uncoded class warnings update after TypeScript edits and preserve variant usages', { timeout: 20000 }, async t => {
+  const c = await client(t, {}, () => pathToFileURL(join(c.root, 'tsconfig.app.json')).href)
+  const app = pathToFileURL(join(c.root, 'app.ts')).href
+  const style = pathToFileURL(join(c.root, 'theme.xcss')).href
+  const css = '.used { color: red; } .unused { color: red; } .variant { color: red; } .empty {} @variants V: .variant;'
+  writeFileSync(join(c.root, 'tsconfig.app.json'), '{"files":["app.ts"]}')
+  writeFileSync(join(c.root, 'theme.xcss'), css)
+  let pending = c.diagnostic(style, 1, ds => ds.some(w => w.message.includes("Class 'unused' is unused")))
+  c.open(style, css)
+  c.open(app, "import { styles } from './theme.xcss'; styles.used;", 'typescript')
+  let warnings = await pending
+  assert(warnings.every(w => w.severity === 2 && !('code' in w)))
+  assert(!warnings.some(w => w.message.includes("Class 'variant'")))
+  assert(warnings.some(w => w.message.includes('empty declaration')))
+  pending = c.diagnostic(style, 1, ds => ds.some(w => w.message.includes("Class 'used' is unused")) && !ds.some(w => w.message.includes("Class 'unused' is unused")))
+  c.edit(app, 2, "import { styles } from './theme.xcss'; styles.unused;")
+  warnings = await pending
+  assert(warnings.every(w => !('code' in w)))
 })

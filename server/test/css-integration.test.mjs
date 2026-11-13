@@ -23,9 +23,16 @@ test('native projection and CSSTree agree on typed, mixed, nested and ordinary C
 @property --other { syntax: "<color>"; inherits: false; initial-value: red; }`
   service.setFile('untitled:integration', 1, source)
   const diagnostics = validator.validateCss(service.cssDeclarations('untitled:integration'))
-  assert.deepEqual(diagnostics.map(d => d.code), ['css.type-mismatch', 'css.type-mismatch', 'css.invalid-value'])
+  assert.deepEqual(diagnostics.map(d => warningType(d)), ['css.type-mismatch', 'css.type-mismatch', 'css.invalid-value'])
   assert.deepEqual(diagnostics[0].range.start, { line: 2, character: source.split('\n')[2].lastIndexOf('$p') })
   assert.equal(diagnostics[1].range.start.line, 4)
   assert.equal(diagnostics[2].range.start.line, 8)
   assert(diagnostics.every(d => !d.message.includes('1s')))
 })
+
+function warningType(d) {
+  assert(!('code' in d), 'advisory warnings must not have diagnostic codes')
+  assert.equal(d.severity, 2)
+  return d.message.startsWith('Unknown CSS property') ? 'css.unknown-property'
+    : d.message.startsWith('A value of type') ? 'css.type-mismatch' : 'css.invalid-value'
+}

@@ -135,6 +135,9 @@ export class Project {
       .concat([...this.configurations.keys()], [...this.requestedPaths])
   }
   typescriptWatchPaths() { return this.typescript.watchPaths() }
+  typescriptClassWarnings(targets: TypescriptTarget[]) {
+    return this.typescript.classWarnings(targets, this.open, this.files, (uri, specifier) => this.resolve(uri, specifier))
+  }
   typescriptDiagnostics(targets: TypescriptTarget[]) {
     return this.typescript.diagnostics(targets, this.open, this.files, (uri, specifier) => this.resolve(uri, specifier))
   }
@@ -151,10 +154,10 @@ export class Project {
     return (this.isolated.get(uri) ?? this.service).document(uri).diagnostics
   }
   cssDiagnostics(uri: string, options: CssValidationOptions) {
-    if (!options.checkCssProperties && !options.checkCssValues) return []
+
     uri = canonicalUri(uri)
     const service = this.isolated.get(uri) ?? this.service
-    return validateCss(service.cssDeclarations(uri), options, this.onWarning)
+    return [...service.classWarnings(uri).map(w => ({ ...w, source: 'XCSS', severity: 2 as const })), ...(options.checkCssProperties || options.checkCssValues ? validateCss(service.cssDeclarations(uri), options, this.onWarning) : [])]
   }
   private validAliases(value: unknown): Aliases {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
@@ -271,6 +274,14 @@ export class Project {
         return service.definition(uri, position!).map(target => ({ originSelectionRange: origin, targetUri: target.uri, targetRange: target.range, targetSelectionRange: target.range }))
       }
       case 'definition': return service.definition(uri, position!)
+      case 'navigationKind': {
+        const token = service.document(uri).tokens.find(token => token.line === position!.line && token.character <= position!.character && position!.character < token.character + token.length)
+        if (!token) return 'definitions'
+        const kind = languageServiceCapabilities().tokenTypes[token.tokenType]
+        // Class selectors are not marked with the declaration modifier by the engine.
+        return kind === 'class' && service.symbolsAt(uri, position!).some(symbol => symbol.kind === 'class')
+          ? 'classUsages' : token.declaration ? 'usages' : 'definitions'
+      }
       case 'references': return service.references(uri, position!, includeDeclaration)
       case 'symbols': return service.symbolsAt(uri, position!)
       case 'completion': return service.completion(uri, position!)
