@@ -94,7 +94,14 @@ async function verify(root, target) {
     assert.equal(formatted.text, '.a {\n  color: red;\n}\n')
     await call('update', 'untitled:css-smoke.xcss', '@vars { --t: time; } .a { dispay: flex; display: fex; width: --t; }', 1)
     const diagnostics = await call('cssDiagnostics', 'untitled:css-smoke.xcss', { checkCssProperties: true, checkCssValues: true })
-    assert.deepEqual(diagnostics.map(d => d.code), ['css.unknown-property', 'css.invalid-value', 'css.type-mismatch'])
+    assert.equal(diagnostics.length, 3)
+    const messages = [/^Unknown CSS property/, /^Invalid CSS value/, /^A value of type/]
+    for (const [index, diagnostic] of diagnostics.entries()) {
+      assert(!('code' in diagnostic), 'Advisory CSS warnings must not have diagnostic codes')
+      assert.equal(diagnostic.severity, 2)
+      assert.equal(diagnostic.source, 'CSS')
+      assert.match(diagnostic.message, messages[index])
+    }
   } finally { await worker.terminate() }
   console.log('Bundled registry packages, integrity, and host-native loading verified')
 }
