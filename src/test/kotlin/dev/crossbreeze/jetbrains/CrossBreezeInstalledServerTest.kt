@@ -100,7 +100,12 @@ class CrossBreezeInstalledServerTest : BasePlatformTestCase() {
             }.get(20, TimeUnit.SECONDS)
             val css = published.getAsJsonObject("params").getAsJsonArray("diagnostics")
                 .map { it.asJsonObject }.filter { it.get("source")?.asString == "CSS" }
-            assertEquals(setOf("css.unknown-property", "css.invalid-value", "css.type-mismatch"), css.map { it.get("code").asString }.toSet())
+            assertEquals(3, css.size)
+            val warningPrefixes = listOf("Unknown CSS property", "Invalid CSS value", "A value of type")
+            css.zip(warningPrefixes).forEach { (warning, prefix) ->
+                assertTrue(!warning.has("code"), "Advisory CSS warnings must not have diagnostic codes")
+                assertTrue(warning.get("message").asString.startsWith(prefix), warning.toString())
+            }
             assertTrue(css.all { it.get("severity").asInt == 2 })
             send("""{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"untitled:format.xcss","languageId":"xcss","version":1,"text":".a{color:red}"}}}""")
             send("""{"jsonrpc":"2.0","id":5,"method":"textDocument/formatting","params":{"textDocument":{"uri":"untitled:format.xcss"},"options":{"tabSize":2,"insertSpaces":true}}}""")

@@ -1,7 +1,14 @@
 package dev.crossbreeze.jetbrains
 
 import com.intellij.codeInsight.navigation.actions.GotoDeclarationHandler
-import com.intellij.find.actions.ShowUsagesAction
+import com.intellij.find.actions.FindUsagesAction
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionPlaces
+import com.intellij.openapi.actionSystem.ActionUiKind
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.CommonDataKeys
+import com.intellij.openapi.actionSystem.ex.ActionUtil
+import com.intellij.openapi.actionSystem.impl.SimpleDataContext
 import com.intellij.find.usages.api.*
 import com.intellij.model.Pointer
 import com.intellij.openapi.application.ApplicationManager
@@ -14,8 +21,8 @@ import com.intellij.platform.lsp.api.LspClientManager
 import com.intellij.platform.lsp.api.LspServerState
 import com.intellij.psi.*
 import com.intellij.psi.impl.FakePsiElement
-import com.intellij.psi.search.GlobalSearchScope
-import com.intellij.ui.awt.RelativePoint
+import com.intellij.usages.UsageView
+import com.intellij.util.Query
 import org.eclipse.lsp4j.*
 import java.util.concurrent.CancellationException
 import java.util.concurrent.CompletableFuture
@@ -81,8 +88,15 @@ class XcssNavigationHandler : GotoDeclarationHandler {
                     val usage = usages.single()
                     OpenFileDescriptor(file.project, usage.file.virtualFile, usage.range.startOffset).navigate(requestFocus)
                 } else {
-                    ShowUsagesAction.startFindUsagesWithResult(file.project, XcssNavigationTarget(usages, name ?: "XCSS"),
-                        RelativePoint.getCenterOf(editor.contentComponent), editor, GlobalSearchScope.projectScope(file.project))
+                    val context = SimpleDataContext.builder()
+                        .add(CommonDataKeys.PROJECT, file.project)
+                        .add(CommonDataKeys.EDITOR, editor)
+                        .add(FindUsagesAction.SEARCH_TARGETS, listOf(XcssNavigationTarget(usages, name ?: "XCSS")))
+                        .add(UsageView.USAGE_TARGETS_KEY, emptyArray())
+                        .build()
+                    val action = ActionManager.getInstance().getAction("ShowUsages")
+                    val event = AnActionEvent.createEvent(action, context, null, ActionPlaces.UNKNOWN, ActionUiKind.NONE, null)
+                    ActionUtil.performAction(action, event)
                 }
             }
         })
@@ -98,4 +112,7 @@ private data class XcssNavigationTarget(val usages: List<PsiUsage>, val name: St
 class XcssNavigationUsageSearcher : UsageSearcher {
     override fun collectImmediateResults(parameters: UsageSearchParameters): Collection<Usage> =
         (parameters.target as? XcssNavigationTarget)?.usages ?: emptyList()
+    // Explicit implementations avoid Kotlin bridges invoking @OverrideOnly defaults.
+    override fun collectSearchRequests(parameters: UsageSearchParameters): Collection<Query<out Usage>> = emptyList()
+    override fun collectSearchRequest(parameters: UsageSearchParameters): Query<out Usage>? = null
 }
