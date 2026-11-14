@@ -22,20 +22,30 @@ class ViteSetupTest : BasePlatformTestCase() {
     override fun createTempDirTestFixture() = TempDirTestFixtureImpl()
 
     fun testStartupOffersSetupWithoutAnXcssFileOrOpenEditor() {
-        val manifest = myFixture.tempDirFixture.createFile("package.json", """{"devDependencies":{"vite":"^8"}}""")
-        if (!ProjectFileIndex.getInstance(project).isInContent(manifest)) PsiTestUtil.addContentRoot(module, manifest.parent)
-        var offer: Notification? = null
-        project.messageBus.connect(testRootDisposable).subscribe(Notifications.TOPIC, object : Notifications {
-            override fun notify(notification: Notification) {
-                if (notification.title.startsWith("XCSS setup for ")) offer = notification
-            }
-        })
-        val descriptor = requireNotNull(PluginManagerCore.getPlugin(PluginId.getId("dev.crossbreeze.jetbrains")))
-        runBlocking { ViteSetupStartup().apply { setPluginDescriptor(descriptor) }.execute(project) }
-        PlatformTestUtil.waitWithEventsDispatching("No Vite setup notification after project startup", { offer != null }, 20)
-        assertEquals(listOf("Review setup", "Don't show again"), offer?.actions?.map { it.templatePresentation.text })
-        assertNull(manifest.parent.findChild("vite.config.ts"))
-        assertNull(manifest.parent.findChild("vite.config.js"))
+        val settings = project.service<CrossBreezeSettings>()
+        val previouslyEnabled = settings.state.enabled
+        // Fixture VFS events can schedule a scan before the notification listener exists.
+        // Keep setup disabled until the listener is installed, independently of test order.
+        settings.state.enabled = false
+        try {
+            val manifest = myFixture.tempDirFixture.createFile("package.json", """{"devDependencies":{"vite":"^8"}}""")
+            if (!ProjectFileIndex.getInstance(project).isInContent(manifest)) PsiTestUtil.addContentRoot(module, manifest.parent)
+            var offer: Notification? = null
+            project.messageBus.connect(testRootDisposable).subscribe(Notifications.TOPIC, object : Notifications {
+                override fun notify(notification: Notification) {
+                    if (notification.title.startsWith("XCSS setup for ")) offer = notification
+                }
+            })
+            val descriptor = requireNotNull(PluginManagerCore.getPlugin(PluginId.getId("dev.crossbreeze.jetbrains")))
+            settings.state.enabled = true
+            runBlocking { ViteSetupStartup().apply { setPluginDescriptor(descriptor) }.execute(project) }
+            PlatformTestUtil.waitWithEventsDispatching("No Vite setup notification after project startup", { offer != null }, 20)
+            assertEquals(listOf("Review setup", "Don't show again"), offer?.actions?.map { it.templatePresentation.text })
+            assertNull(manifest.parent.findChild("vite.config.ts"))
+            assertNull(manifest.parent.findChild("vite.config.js"))
+        } finally {
+            settings.state.enabled = previouslyEnabled
+        }
     }
 
     fun testReviewedSetupIsOneUndoableChange() {

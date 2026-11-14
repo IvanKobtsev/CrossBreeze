@@ -71,6 +71,17 @@ jobs:
           done
           chmod +x dist/native/linux-*/server/crossbreeze dist/native/mac-*/server/crossbreeze gradlew
       - run: ./gradlew test verifyPlugin verifyPluginArchive -Pcrossbreeze.prebuiltNative=true --stacktrace
+      - name: Upload plugin test diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-test-diagnostics
+          path: |
+            build/test-results/test/
+            build/reports/tests/test/
+            build/idea-sandbox/**/log/
+          if-no-files-found: warn
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         with:
           name: crossbreeze-native-plugins
