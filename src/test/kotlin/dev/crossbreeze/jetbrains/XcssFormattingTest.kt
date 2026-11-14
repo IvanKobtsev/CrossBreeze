@@ -52,10 +52,6 @@ class XcssFormattingTest : BasePlatformTestCase() {
         assertFalse(settings.indentOptions!!.USE_TAB_CHARACTER)
     }
     fun testReformatActionAndUndo() {
-        val node = System.getenv("CROSSBREEZE_TEST_NODE") ?: "node"
-        com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterManager.getInstance(project).setInterpreterRef(
-            com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterRef.create(
-                com.intellij.javascript.nodejs.interpreter.local.NodeJsLocalInterpreter(node)), testRootDisposable)
         project.getService(CrossBreezeSettings::class.java).state.enabled = true
         val source = ".a{color:red}"
         myFixture.configureFromExistingVirtualFile(myFixture.tempDirFixture.createFile("format.xcss", source))
@@ -89,10 +85,6 @@ class XcssFormattingTest : BasePlatformTestCase() {
         }
     }
     fun testNativeColorProviderChangesLiteralAndUndo() {
-        val node = System.getenv("CROSSBREEZE_TEST_NODE") ?: "node"
-        com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterManager.getInstance(project).setInterpreterRef(
-            com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterRef.create(
-                com.intellij.javascript.nodejs.interpreter.local.NodeJsLocalInterpreter(node)), testRootDisposable)
         project.getService(CrossBreezeSettings::class.java).state.enabled = true
         val source = ".a { color: red; }"
         myFixture.configureFromExistingVirtualFile(myFixture.tempDirFixture.createFile("format.xcss", source))
@@ -133,10 +125,6 @@ class XcssFormattingTest : BasePlatformTestCase() {
         }
     }
     fun testModifierHoverResolvesWithoutNavigationAction() {
-        val node = System.getenv("CROSSBREEZE_TEST_NODE") ?: "node"
-        com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterManager.getInstance(project).setInterpreterRef(
-            com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterRef.create(
-                com.intellij.javascript.nodejs.interpreter.local.NodeJsLocalInterpreter(node)), testRootDisposable)
         project.getService(CrossBreezeSettings::class.java).state.enabled = true
         val source = "@vars { --tone: color = red; } .a { color: --tone; }"
         myFixture.configureFromExistingVirtualFile(myFixture.tempDirFixture.createFile("format.xcss", source))

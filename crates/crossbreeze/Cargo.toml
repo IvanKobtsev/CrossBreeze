@@ -1,0 +1,25 @@
+[package]
+name = "crossbreeze"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+xcss-language-service.workspace = true
+xcss-format.workspace = true
+xcss-source.workspace = true
+xcss-syntax = "=0.13.0"
+serde_json = "1"
+url = "2"
+notify = "8"
+lightningcss = { version = "=1.0.0-alpha.72", default-features = false }
+cssparser = "0.37"
+cssparser-color = "0.5"
+jsonc-parser = { version = "0.34", features = ["cst", "serde"] }
+serde = { version = "1", features = ["derive"] }
+tsrs_parser = "=7.1.0-beta.tsrs1"
+tsrs_ast = "=7.1.0-beta.tsrs1"
+tsrs_core = "=7.1.0-beta.tsrs1"
+tsrs_scanner = "=7.1.0-beta.tsrs1"
+tsrs_binder = "=7.1.0-beta.tsrs1"

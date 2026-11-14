@@ -1,8 +1,5 @@
 package dev.crossbreeze.jetbrains
 
-import com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterManager
-import com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterRef
-import com.intellij.javascript.nodejs.interpreter.local.NodeJsLocalInterpreter
 import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.notification.Notification
 import com.intellij.notification.Notifications
@@ -27,10 +24,6 @@ class ViteSetupTest : BasePlatformTestCase() {
     fun testStartupOffersSetupWithoutAnXcssFileOrOpenEditor() {
         val manifest = myFixture.tempDirFixture.createFile("package.json", """{"devDependencies":{"vite":"^8"}}""")
         if (!ProjectFileIndex.getInstance(project).isInContent(manifest)) PsiTestUtil.addContentRoot(module, manifest.parent)
-        val node = System.getenv("CROSSBREEZE_TEST_NODE") ?: "node"
-        NodeJsInterpreterManager.getInstance(project).setInterpreterRef(
-            NodeJsInterpreterRef.create(NodeJsLocalInterpreter(node)), testRootDisposable,
-        )
         var offer: Notification? = null
         project.messageBus.connect(testRootDisposable).subscribe(Notifications.TOPIC, object : Notifications {
             override fun notify(notification: Notification) {
@@ -88,4 +81,3 @@ class ViteSetupTest : BasePlatformTestCase() {
         assertEquals("export default { base: '/app/' }", document.text)
     }
 }
-

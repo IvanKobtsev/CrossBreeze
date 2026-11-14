@@ -1,4 +1,5 @@
 import groovy.json.JsonSlurper
+import java.io.File
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.intellij.platform.gradle.tasks.BuildPluginVariantsTask
 import org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask
@@ -17,7 +18,6 @@ dependencies {
     intellijPlatform {
         webstorm("2026.3")
         bundledPlugin("JavaScript")
-        bundledPlugin("NodeJS")
         testFramework(TestFrameworkType.Platform)
     }
     testImplementation(kotlin("test"))
@@ -27,17 +27,27 @@ kotlin { jvmToolchain(25); compilerOptions { jvmTarget = JvmTarget.JVM_25 } }
 val nativeTargetsFile = layout.projectDirectory.file("scripts/native-targets.json")
 @Suppress("UNCHECKED_CAST")
 val nativeTargets = JsonSlurper().parse(nativeTargetsFile.asFile) as Map<String, List<String>>
-val bundleDirectory = layout.projectDirectory.dir("dist/bundle")
-val npm = if (System.getProperty("os.name").startsWith("Windows")) "npm.cmd" else "npm"
+val bundleDirectory = layout.projectDirectory.dir("dist/native")
+val cargoExecutable = providers.environmentVariable("CARGO").orElse(
+    File(System.getProperty("user.home"), ".cargo/bin/" + if (System.getProperty("os.name").startsWith("Windows")) "cargo.exe" else "cargo").let { if (it.isFile) it.absolutePath else "cargo" }
+)
+val hostOs = System.getProperty("os.name").let { if (it.startsWith("Windows")) "windows" else if (it.startsWith("Mac")) "mac" else "linux" }
+val hostArch = System.getProperty("os.arch").let { if (it in listOf("aarch64", "arm64")) "arm64" else "x86_64" }
+val hostTarget = "$hostOs-$hostArch"
 val nativeBundles = nativeTargets.keys.associateWith { target ->
     tasks.register<Exec>("bundleNative_${target.replace('-', '_')}") {
         workingDir(rootDir)
-        commandLine("node", "scripts/bundle-native.mjs", "--target", target)
-        inputs.files(fileTree("scripts"), file("package.json"), file("package-lock.json"))
+        val arguments = mutableListOf(cargoExecutable.get(), "run", "--locked", "-p", "crossbreeze-build", "--", "bundle", "--target", target)
+        val nativeDebug = providers.gradleProperty("crossbreeze.nativeDebug").orNull == "true"
+        if (nativeDebug) arguments += "--debug"
+        inputs.property("nativeDebug", nativeDebug)
+        commandLine(arguments)
+        val buildNative = providers.gradleProperty("crossbreeze.prebuiltNative").orNull != "true"
+        onlyIf { buildNative }
+        inputs.files(fileTree("crates"), file("Cargo.toml"), file("Cargo.lock"), file("rust-toolchain.toml"))
         outputs.dir(bundleDirectory.dir(target))
     }
 }
-
 intellijPlatform {
     pluginConfiguration {
         ideaVersion { sinceBuild = "263.7307.202" }
@@ -53,99 +63,42 @@ intellijPlatform {
         windows.arm64.from(nativeBundles.getValue("windows-arm64"))
     }
 }
-val bundleServer = tasks.register<Exec>("bundleServer") {
-    workingDir(rootDir)
-    commandLine(npm, "run", "bundle", "--", "--common")
-    inputs.files(fileTree("server/src"), fileTree("scripts"), file("package.json"), file("package-lock.json"))
-    outputs.dir(bundleDirectory.dir("common"))
+tasks.named<PrepareSandboxTask>("prepareTestSandbox") {
+    dependsOn(nativeBundles.getValue(hostTarget))
+    from(bundleDirectory.dir(hostTarget)) { into(pluginName) }
 }
-tasks.withType<PrepareSandboxTask>().configureEach {
-    dependsOn(bundleServer)
-    from(bundleDirectory.dir("common")) { into(pluginName) }
-}
-
 abstract class VerifyPluginArchive : DefaultTask() {
     @get:InputFiles abstract val archives: ConfigurableFileCollection
-    @get:InputFile abstract val lockfile: RegularFileProperty
     @get:Input abstract val targets: MapProperty<String, List<String>>
     @get:Input abstract val baseName: Property<String>
 
     @TaskAction fun verify() {
         val zips = archives.files.associateBy { it.name }
         val expected = targets.get()
-        check(zips.keys == expected.keys.map { "${baseName.get()}-$it.zip" }.toSet()) {
-            "Expected all six targeted plugin archives. Found ${zips.keys}"
-        }
-        val lock = JsonSlurper().parse(lockfile.get().asFile) as Map<*, *>
-        val packages = lock["packages"] as Map<*, *>
-        val loader = "@cross-css/native"
-        for ((target, binaries) in expected) {
-            val name = "${baseName.get()}-$target.zip"
-            val archive = zips.getValue(name)
+        check(zips.keys == expected.keys.map { "${baseName.get()}-$it.zip" }.toSet()) { "Expected all six native plugin archives" }
+        for (target in expected.keys) {
+            val archive = zips.getValue("${baseName.get()}-$target.zip")
             ZipFile(archive).use { zip ->
                 val entries = zip.entries().asSequence().filterNot { it.isDirectory }.map { it.name }.toList()
-                check(entries.size == entries.toSet().size) { "$name contains duplicate paths" }
-                val server = entries.single { it.endsWith("/server/index.cjs") }.removeSuffix("index.cjs")
-                val root = server.removeSuffix("server/")
-                val modules = "${server}node_modules/"
-                val nativePackages = binaries.map { "$loader-$it" }.toSet()
-                val expectedPackages = nativePackages + loader
-                val actualPackages = entries.filter { it.startsWith("$modules$loader") }
-                    .map { it.removePrefix(modules).split('/').take(2).joinToString("/") }.toSet()
-                check(actualPackages == expectedPackages) { "$name contains the wrong native packages: $actualPackages" }
-                check(entries.filter { it.endsWith("/xcss.node") }.toSet() == nativePackages.map { "$modules$it/xcss.node" }.toSet()) {
-                    "$name contains the wrong native binaries"
+                check(entries.size == entries.toSet().size) { "Duplicate archive paths" }
+                check(entries.none { it.contains("/node_modules/") || it.endsWith(".node") || it.endsWith(".cjs") }) { "Node artifacts in native archive" }
+                val manifestPath = entries.single { it.endsWith("/server/native-manifest.json") }
+                val server = manifestPath.removeSuffix("native-manifest.json")
+                val manifest = zip.getInputStream(zip.getEntry(manifestPath)).use { JsonSlurper().parse(it) as Map<*, *> }
+                check(manifest["target"] == target)
+                check(manifest["profile"] == "release") { "Debug executable in release archive" }
+                val hashes = manifest["files"] as Map<*, *>
+                val executable = if (target.startsWith("windows-")) "crossbreeze.exe" else "crossbreeze"
+                check(hashes.containsKey(executable) && hashes.containsKey("Cargo.lock"))
+                check(entries.filter { it.startsWith(server) }.toSet() == hashes.keys.map { server + it }.toSet() + manifestPath) { "Unmanifested native files" }
+                for ((path, hash) in hashes) {
+                    val bytes = zip.getInputStream(checkNotNull(zip.getEntry(server + path))).use { it.readBytes() }
+                    check(MessageDigest.getInstance("SHA-256").digest(bytes).toHexString() == hash) { "Integrity mismatch: $path" }
                 }
-                for (file in listOf("index.cjs.map", "worker.cjs", "worker.cjs.map", "vite-setup.cjs", "vite-setup.cjs.map")) {
-                    check(server + file in entries) { "$name is missing $file" }
-                }
-                val manifest = readManifest(zip, "${server}native-loader-manifest.json", setOf(loader)) +
-                    readManifest(zip, "${server}native-platform-manifest.json", nativePackages)
-                for (item in manifest) {
-                    val pkg = item["name"] as String
-                    val locked = packages["node_modules/$pkg"] as Map<*, *>
-                    for (key in listOf("version", "resolved", "integrity")) {
-                        check(item[key] == locked[key]) { "$name has incorrect lock metadata for $pkg ($key)" }
-                    }
-                    val prefix = "$modules$pkg/"
-                    val hashes = item["hashes"] as Map<*, *>
-                    val required = if (pkg == loader) {
-                        setOf("package.json", "index.js", "platform.cjs", "LICENSE", "TSRS-LICENSE", "TSRS-NOTICE")
-                    } else setOf("package.json", "xcss.node", "LICENSE")
-                    check(hashes.keys.containsAll(required)) { "$name is missing required files for $pkg" }
-                    check(hashes.keys == entries.filter { it.startsWith(prefix) }.map { it.removePrefix(prefix) }.toSet()) {
-                        "$name has an incomplete manifest for $pkg"
-                    }
-                    for ((file, hash) in hashes) {
-                        val digest = MessageDigest.getInstance("SHA-256")
-                        zip.getInputStream(zip.getEntry(prefix + file)).use { input ->
-                            val buffer = ByteArray(8192)
-                            while (true) {
-                                val count = input.read(buffer)
-                                if (count == -1) break
-                                digest.update(buffer, 0, count)
-                            }
-                        }
-                        check(digest.digest().toHexString() == hash) { "$name failed SHA-256 verification for $pkg/$file" }
-                    }
-                }
-                verifyDescriptor(zip, entries, root, target)
+                verifyDescriptor(zip, entries, server.removeSuffix("server/"), target)
             }
-            logger.lifecycle("Verified $name (${archive.length()} bytes)")
         }
     }
-
-    private fun readManifest(zip: ZipFile, path: String, expected: Set<String>): List<Map<*, *>> {
-        val entry = checkNotNull(zip.getEntry(path)) { "Missing $path in ${zip.name}" }
-        val manifest = zip.getInputStream(entry).use { input ->
-            (JsonSlurper().parse(input) as List<*>).map { it as Map<*, *> }
-        }
-        check(manifest.size == expected.size && manifest.map { it["name"] }.toSet() == expected) {
-            "Unexpected packages in $path of ${zip.name}"
-        }
-        return manifest
-    }
-
     private fun verifyDescriptor(zip: ZipFile, entries: List<String>, root: String, target: String) {
         val factory = DocumentBuilderFactory.newInstance().apply {
             setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
@@ -173,7 +126,12 @@ abstract class VerifyPluginArchive : DefaultTask() {
 }
 tasks.register<VerifyPluginArchive>("verifyPluginArchive") {
     archives.from(tasks.named<BuildPluginVariantsTask>("buildPluginVariants").map { it.archiveFiles })
-    lockfile.set(layout.projectDirectory.file("package-lock.json"))
     targets.set(nativeTargets)
     baseName.set("${project.name}-${project.version}")
+}
+
+tasks.withType<Zip>().configureEach {
+    filesMatching("**/server/crossbreeze") {
+        permissions { unix("rwxr-xr-x") }
+    }
 }

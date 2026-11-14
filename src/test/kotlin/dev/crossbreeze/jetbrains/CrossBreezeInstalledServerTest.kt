@@ -2,9 +2,6 @@ package dev.crossbreeze.jetbrains
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
-import com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterManager
-import com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterRef
-import com.intellij.javascript.nodejs.interpreter.local.NodeJsLocalInterpreter
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.CompletableFuture
@@ -12,7 +9,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/** Exercises the plugin-installed server and configured interpreter, not source-tree paths. */
+/** Exercises the plugin-installed native server, not source-tree paths. */
 class CrossBreezeInstalledServerTest : BasePlatformTestCase() {
     private val serverProjectDescriptor = com.intellij.testFramework.LightProjectDescriptor()
     override fun getProjectDescriptor() = serverProjectDescriptor
@@ -36,10 +33,6 @@ class CrossBreezeInstalledServerTest : BasePlatformTestCase() {
         assertEquals(false, updated["checkCssValues"])
     }
     fun testBundledServerReturnsSemanticTokensAndCssDiagnostics() {
-        val node = System.getenv("CROSSBREEZE_TEST_NODE") ?: "node"
-        NodeJsInterpreterManager.getInstance(project).setInterpreterRef(
-            NodeJsInterpreterRef.create(NodeJsLocalInterpreter(node)), testRootDisposable,
-        )
         val provider = com.intellij.openapi.extensions.ExtensionPointName.create<com.intellij.platform.lsp.api.LspIntegrationProvider>("com.intellij.platform.lsp.integrationProvider")
             .extensionList.filterIsInstance<CrossBreezeLspIntegrationProvider>().single()
         val descriptor = provider.descriptorFor(project)

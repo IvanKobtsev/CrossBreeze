@@ -6,4 +6,5 @@ build/
 .idea/
 *.iml
 server/out/
+/target/
 

@@ -7,8 +7,6 @@ import com.intellij.diff.DiffManager
 import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.ide.util.PropertiesComponent
-import com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterManager
-import com.intellij.javascript.nodejs.interpreter.local.NodeJsLocalInterpreter
 import com.intellij.notification.Notification
 import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
@@ -58,7 +56,7 @@ internal class ViteSetupStartup : ProjectActivity, PluginAware {
     private lateinit var planner: Path
 
     override fun setPluginDescriptor(pluginDescriptor: PluginDescriptor) {
-        planner = pluginDescriptor.pluginPath.resolve("server/vite-setup.cjs")
+        planner = nativeServer(pluginDescriptor.pluginPath)
     }
 
     override suspend fun execute(project: Project) {
@@ -152,11 +150,7 @@ internal class ViteSetupService(private val project: Project) {
             }
         }
         if (inputs.isEmpty()) return emptyMap()
-        val interpreter = NodeJsInterpreterManager.getInstance(project).interpreter as? NodeJsLocalInterpreter
-            ?: return inputs.associate { input ->
-                input.root to Plan(emptyList(), listOf(Step("Configure a local Node.js runtime in WebStorm to review XCSS setup.", input.root)))
-            }
-        val plans = runPlanner(interpreter, script, inputs)
+        val plans = runPlanner(script, inputs)
         return plans.ifEmpty {
             inputs.associate { input ->
                 input.root to Plan(emptyList(), listOf(Step("CrossBreeze could not read the Vite setup. Check the package and Vite configuration.", input.root + "/package.json")))
@@ -179,9 +173,9 @@ internal class ViteSetupService(private val project: Project) {
         }
     }
 
-    private fun runPlanner(interpreter: NodeJsLocalInterpreter, script: Path, inputs: List<Input>): Map<String, Plan> {
+    private fun runPlanner(script: Path, inputs: List<Input>): Map<String, Plan> {
         return try {
-            val process = GeneralCommandLine(interpreter.interpreterSystemDependentPath, script.toString())
+            val process = GeneralCommandLine(script.toString(), "vite-setup")
                 .withWorkDirectory(inputs.first().root).withCharset(UTF_8).createProcess()
             try {
                 // Drain stdout while the process runs so a large diff cannot fill the pipe.
@@ -341,4 +335,3 @@ private class SetupDialog(private val project: Project, private val plan: ViteSe
         if (plan.edits.isEmpty()) close(CANCEL_EXIT_CODE) else super.doOKAction()
     }
 }
-

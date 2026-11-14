@@ -2,8 +2,6 @@ package dev.crossbreeze.jetbrains
 
 import com.intellij.execution.ExecutionException
 import com.intellij.execution.configurations.GeneralCommandLine
-import com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterManager
-import com.intellij.javascript.nodejs.interpreter.local.NodeJsLocalInterpreter
 import com.intellij.lang.typescript.tsconfig.TypeScriptConfigService
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -67,12 +65,10 @@ internal class CrossBreezeDescriptor(project: Project, private val root: Path) :
         else -> "xcss"
     }
     override fun createCommandLine(): GeneralCommandLine {
-        val interpreter = NodeJsInterpreterManager.getInstance(project).interpreter
-        val local = interpreter as? NodeJsLocalInterpreter ?: throw unavailable("Configure a local Node.js runtime in Languages & Frameworks → JavaScript Runtime. Remote, WSL, and Docker runtimes are not supported yet.")
-        val server = root.resolve("server/index.cjs")
+        val server = nativeServer(root)
         if (!Files.isRegularFile(server)) throw unavailable("The bundled language server is missing. Reinstall CrossBreeze.")
         project.service<CrossBreezeRuntime>().status = "Starting"
-        return GeneralCommandLine(local.interpreterSystemDependentPath, server.toString())
+        return GeneralCommandLine(server.toString())
             .withWorkDirectory(project.basePath ?: root.toString())
             .withCharset(Charsets.UTF_8)
     }

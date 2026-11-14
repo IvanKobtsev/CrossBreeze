@@ -1,8 +1,5 @@
 package dev.crossbreeze.jetbrains
 
-import com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterManager
-import com.intellij.javascript.nodejs.interpreter.NodeJsInterpreterRef
-import com.intellij.javascript.nodejs.interpreter.local.NodeJsLocalInterpreter
 import com.intellij.lang.annotation.HighlightSeverity
 import com.intellij.openapi.actionSystem.IdeActions
 import com.intellij.openapi.command.WriteCommandAction
@@ -30,10 +27,6 @@ class XcssDiagnosticsTest : BasePlatformTestCase() {
     fun testStylesheetAndTypescriptDiagnosticsInEditor() {
         val settings = project.getService(CrossBreezeSettings::class.java)
         settings.state.enabled = false
-        val node = System.getenv("CROSSBREEZE_TEST_NODE") ?: "node"
-        NodeJsInterpreterManager.getInstance(project).setInterpreterRef(
-            NodeJsInterpreterRef.create(NodeJsLocalInterpreter(node)), testRootDisposable,
-        )
         val validStyle = "@vars { @provided --button-width: length; }\n.valid {}"
         val stylesheet = myFixture.tempDirFixture.createFile("theme.xcss", "$validStyle\nbogus;")
         myFixture.tempDirFixture.createFile("xcss-env.d.ts", """

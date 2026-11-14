@@ -13,13 +13,10 @@ references, hover, lexical highlighting, semantic highlighting, and source forma
 3. Extract GitHub's artifact archive. Keep the inner platform-specific plugin ZIP intact.
 4. In WebStorm, open **Settings → Plugins → gear → Install Plugin from Disk**,
    select that inner ZIP, and restart if prompted.
-5. Configure a **local Node.js runtime** under **Languages & Frameworks → JavaScript Runtime**.
-   Use Node 20.19.x or 22.12 and newer supported majors. Node and WebStorm must use
-   the same CPU architecture.
 
-Each plugin ZIP includes its server and the XCSS native binaries for its target.
-Linux ZIPs support both glibc and musl. The plugin works offline with the configured
-Node runtime. CI builds all six ZIPs on pushes, pull requests, and manual runs.
+Each platform-specific plugin ZIP includes a standalone Rust language server.
+No Node.js interpreter is required. Linux bundles use musl binaries.
+CI builds native executables on platform runners and assembles six plugin ZIPs.
 Artifacts expire after 30 days.
 
 ## Project behavior
@@ -41,7 +38,7 @@ Overrides take precedence, with paths relative to the containing project content
 root. Configuration changes restart the server. The status-bar item shows server
 state; click it or choose **Tools → Restart CrossBreeze Language Server** to restart.
 Semantic colors can be customized under **Editor → Color Scheme → XCSS**. Lexical
-highlighting remains available when Node or the server is unavailable.
+highlighting remains available when the server is unavailable.
 
 Basic editing also works without the server: the IDE's line and block comment
 actions use CSS `/* ... */` comments, braces/parentheses/brackets and quotes are
@@ -57,7 +54,7 @@ Use **Code → Reformat Code** for whole-file XCSS formatting. The formatter run
 in the native Rust engine through the language server and includes XCSS variables,
 constants, injections, utilities, calls, and ordinary CSS. It uses the file's IDE
 indentation settings, right margin, and line separator. Configure defaults under
-**Editor → Code Style → XCSS**. Node and a running language server are required.
+**Editor → Code Style → XCSS**. A running language server is required.
 
 CSS reference fixtures follow Prettier 3.6.2; exhaustive output compatibility is
 not guaranteed. Syntax errors leave the document unchanged; unresolved imports
@@ -172,28 +169,33 @@ to their declarations.
 
 ## Development
 
-Install JDK 25 and a supported Node.js runtime, then run:
+Install JDK 25 and Rust 1.99 (see rust-toolchain.toml), then run:
 
 ```sh
-npm ci --ignore-scripts
-npm run check
-npm test
-npm run bundle
-npm run verify:bundle
-./gradlew test verifyPlugin verifyPluginArchive
+cargo test --workspace --locked -j 1
+cargo clippy --workspace --all-targets --locked -- -D warnings
+./gradlew test -Pcrossbreeze.nativeDebug=true
 ```
 
-The six installable ZIPs in `build/distributions` have OS and architecture suffixes.
-Use `./gradlew buildPluginVariants` to build them without running verification.
-`./gradlew runIde` opens a WebStorm
-sandbox. Open a multi-file XCSS project, check diagnostics, Ctrl/Cmd-click an
-injection or variable, find references, inspect hover, and edit an unsaved document
-to verify live highlighting and diagnostics. Configure Node inside the sandbox.
+Build a release executable and distribution files for a supported target:
 
-CrossBreeze pins **@cross-css/native 0.11.0 from npm**, including package-lock
-integrity. Packaging fetches the locked tarballs for each target, verifies SHA-512
-integrity, includes licenses, and records per-file hashes. The npm bundle smoke
-test loads the target matching the current Node runtime.
+```sh
+cargo run --locked -p crossbreeze-build -- bundle --target windows-x86_64
+```
 
-The CI packaging and artifact layout follows LocaleBreeze's editor workflow,
-adapted to consume published XCSS packages rather than building engine binaries.
+Supported targets are linux-x86_64, linux-arm64, mac-x86_64, mac-arm64,
+windows-x86_64, and windows-arm64. Cross-target builds require the corresponding
+Rust target and linker. CI builds each bundle on its platform runner.
+
+To assemble all six plugin ZIPs, supply every target bundle under dist/native,
+then run:
+
+```sh
+./gradlew buildPluginVariants verifyPluginArchive -Pcrossbreeze.prebuiltNative=true
+```
+
+The native bundle manifest records the target, build profile, dependency notices,
+and SHA-256 hashes. Archive verification rejects debug bundles, missing files,
+and Node artifacts. CrossBreeze consumes XCSS 0.13.0 from crates.io, pinned in
+Cargo.lock. The old server/ TypeScript sources remain as migration reference;
+the current launchers and Gradle build use the Rust executable.

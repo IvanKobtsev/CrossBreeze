@@ -5,13 +5,12 @@
   <description><![CDATA[
     <p>XCSS language support for WebStorm: diagnostics, definition navigation,
     references, hover, semantic highlighting, and source formatting. Includes lexical highlighting
-    while the language server starts. Uses the project's configured local Node.js runtime.</p>
+    while the language server starts. Includes a standalone native Rust language server.</p>
   ]]></description>
   <depends>com.intellij.modules.platform</depends>
   <depends>com.intellij.modules.ultimate</depends>
   <depends>com.intellij.modules.lsp</depends>
   <depends>JavaScript</depends>
-  <depends>NodeJS</depends>
   <extensions defaultExtensionNs="com.intellij">
     <fileType name="XCSS" language="XCSS" extensions="xcss" implementationClass="dev.crossbreeze.jetbrains.XcssFileType" fieldName="INSTANCE"/>
     <editorNotificationProvider implementation="dev.crossbreeze.jetbrains.XcssTypescriptSetupNotification"/>
