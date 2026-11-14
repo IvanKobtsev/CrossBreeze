@@ -35,6 +35,108 @@ fn canonical(path: &Path) -> PathBuf {
 }
 
 impl Workspace {
+    pub fn asset_watch_roots(&mut self) -> BTreeSet<PathBuf> {
+        let snapshot = self.snapshot();
+        let mut roots = BTreeSet::new();
+        for source in self.files.keys() {
+            for asset in crate::assets::urls(&snapshot.css_values(&FileId(uri(source)))) {
+                if let Some(target) = self.resolve_asset(source, &asset.value)
+                    && !self.roots.iter().any(|root| target.starts_with(root))
+                {
+                    let mut parent = target.parent();
+                    while let Some(path) = parent {
+                        if path.is_dir() {
+                            roots.insert(path.to_path_buf());
+                            break;
+                        }
+                        parent = path.parent();
+                    }
+                }
+            }
+        }
+        roots
+    }
+    pub fn resolve_asset(&self, importer: &Path, value: &str) -> Option<PathBuf> {
+        let value = crate::assets::local_path(value)?;
+        if value.starts_with('/') {
+            return self
+                .public_directory(importer)
+                .map(|directory| canonical(&directory.join(value.trim_start_matches('/'))));
+        }
+        let parent = importer.parent()?;
+        if value.starts_with('.') || Path::new(&value).is_absolute() {
+            return Some(canonical(&parent.join(value)));
+        }
+        let (base, aliases) = self.nearest_paths(importer);
+        let root = self
+            .roots
+            .iter()
+            .find(|r| importer.starts_with(r))
+            .map_or(parent, |r| r.as_path());
+        for (rules, base) in [(&self.aliases, root), (&aliases, base.as_path())] {
+            let mut matched: Vec<_> = rules
+                .iter()
+                .filter_map(|(key, values)| {
+                    if let Some((prefix, suffix)) = key.split_once('*') {
+                        value
+                            .strip_prefix(prefix)?
+                            .strip_suffix(suffix)
+                            .map(|capture| (false, prefix.len(), capture, values))
+                    } else {
+                        (key == &value).then_some((true, key.len(), "", values))
+                    }
+                })
+                .collect();
+            matched.sort_by_key(|r| std::cmp::Reverse((r.0, r.1)));
+            if let Some((_, _, capture, values)) = matched.first() {
+                let paths: Vec<_> = values
+                    .iter()
+                    .map(|v| canonical(&base.join(v.replace('*', capture))))
+                    .collect();
+                return paths
+                    .iter()
+                    .find(|p| p.is_file())
+                    .cloned()
+                    .or_else(|| paths.first().cloned());
+            }
+        }
+        Some(canonical(&parent.join(value)))
+    }
+    fn public_directory(&self, importer: &Path) -> Option<PathBuf> {
+        let boundary = self
+            .roots
+            .iter()
+            .filter(|root| importer.starts_with(root))
+            .max_by_key(|root| root.components().count())?;
+        let read = |path: &Path| {
+            self.overlays
+                .get(&canonical(path))
+                .cloned()
+                .or_else(|| fs::read_to_string(path).ok())
+        };
+        let mut package = None;
+        for directory in importer
+            .parent()?
+            .ancestors()
+            .take_while(|dir| dir.starts_with(boundary))
+        {
+            if package.is_none() && read(&directory.join("package.json")).is_some() {
+                package = Some(directory.to_path_buf());
+            }
+            let configs: Vec<_> = ["ts", "js", "mts", "mjs", "cts", "cjs"]
+                .iter()
+                .filter_map(|ext| read(&directory.join(format!("vite.config.{ext}"))))
+                .collect();
+            if configs.len() > 1 {
+                return None;
+            }
+            if let Some(source) = configs.first() {
+                let (root, public) = crate::vite::public_paths(source)?;
+                return Some(directory.join(root).join(public));
+            }
+        }
+        Some(package.unwrap_or_else(|| boundary.clone()).join("public"))
+    }
     fn config_paths(
         &self,
         path: &Path,
@@ -375,6 +477,53 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn public_assets_follow_configuration_overlays_creation_and_deletion() {
+        let root = std::env::temp_dir().join(format!("crossbreeze-public-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("package.json"), "{}").unwrap();
+        let root = canonical(&root);
+        let importer = root.join("app.xcss");
+        let config = root.join("vite.config.ts");
+        let mut workspace = Workspace {
+            roots: vec![root.clone()],
+            ..Default::default()
+        };
+        let default = workspace.resolve_asset(&importer, "/logo.png").unwrap();
+        assert!(default.ends_with("public/logo.png"));
+        workspace.overlays.insert(
+            config.clone(),
+            "export default defineConfig({root:'web', publicDir:'static'});".into(),
+        );
+        let target = workspace
+            .resolve_asset(&importer, "/logo.png?raw#icon")
+            .unwrap();
+        assert!(target.ends_with("web/static/logo.png"));
+        assert!(!target.is_file());
+        fs::create_dir_all(root.join("web/static")).unwrap();
+        fs::write(&target, []).unwrap();
+        assert!(
+            workspace
+                .resolve_asset(&importer, "/logo.png")
+                .unwrap()
+                .is_file()
+        );
+        fs::remove_file(&target).unwrap();
+        assert!(
+            !workspace
+                .resolve_asset(&importer, "/logo.png")
+                .unwrap()
+                .is_file()
+        );
+        workspace
+            .overlays
+            .insert(config, "export default { publicDir: false };".into());
+        assert!(workspace.resolve_asset(&importer, "/logo.png").is_none());
+        fs::remove_dir(root.join("web/static")).unwrap();
+        fs::remove_dir(root.join("web")).unwrap();
+        fs::remove_file(root.join("package.json")).unwrap();
+        fs::remove_dir(root).unwrap();
+    }
     #[test]
     fn inherited_jsonc_aliases_follow_overlays_and_authoritative_overrides() {
         let root = std::env::temp_dir().join(format!("crossbreeze-aliases-{}", std::process::id()));

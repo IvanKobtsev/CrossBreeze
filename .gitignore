@@ -5,6 +5,5 @@ build/
 .intellijPlatform/
 .idea/
 *.iml
-server/out/
-/target/
 
+/target/

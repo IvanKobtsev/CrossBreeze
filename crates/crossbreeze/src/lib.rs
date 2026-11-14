@@ -4,8 +4,10 @@
 pub use xcss_format::{FormatOptions, FormatResult, format};
 pub use xcss_language_service::{LanguageService, ServiceSnapshot};
 
+pub mod assets;
 pub mod css;
 pub mod documents;
+pub mod formatting;
 pub mod setup;
 pub mod transport;
 pub mod typescript;

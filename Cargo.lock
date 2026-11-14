@@ -109,6 +109,7 @@ dependencies = [
  "jsonc-parser",
  "lightningcss",
  "notify",
+ "percent-encoding",
  "serde",
  "serde_json",
  "tsrs_ast",

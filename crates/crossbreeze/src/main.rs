@@ -66,22 +66,37 @@ fn project_diagnostics(
         }
         return Vec::new();
     }
-    diagnostics(
-        &workspace.snapshot(),
-        &FileId(workspace::uri(path)),
-        properties,
-        values,
-    )
+    let snapshot = workspace.snapshot();
+    let file = FileId(workspace::uri(path));
+    let mut result = diagnostics(&snapshot, &file, properties, values);
+    for asset in crossbreeze::assets::urls(&snapshot.css_values(&file)) {
+        if let Some(target) = workspace.resolve_asset(path, &asset.value)
+            && !target.is_file()
+        {
+            result.push(json!({"source":"XCSS","code":"asset.not-found","severity":1,"message":format!("Cannot resolve asset '{}'.",asset.value),"range":range(&asset.range)}));
+        }
+    }
+    result
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let (sender, receiver) = std::sync::mpsc::channel();
     let input_sender = sender.clone();
+    let cancelled = std::sync::Arc::new(std::sync::Mutex::new(
+        std::collections::HashSet::<String>::new(),
+    ));
+    let input_cancelled = cancelled.clone();
     std::thread::spawn(move || {
         let mut input = io::stdin().lock();
         loop {
             match transport::read_message(&mut input) {
                 Ok(Some(body)) => {
+                    if let Ok(value) = serde_json::from_slice::<Value>(&body)
+                        && value["method"] == "$/cancelRequest"
+                        && let Some(id) = value["params"].get("id")
+                    {
+                        input_cancelled.lock().unwrap().insert(id.to_string());
+                    }
                     if input_sender.send(Some(body)).is_err() {
                         break;
                     }
@@ -94,14 +109,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     let mut _watcher = None;
+    let mut watched_roots = std::collections::BTreeSet::new();
     let mut output = io::stdout().lock();
     let mut documents = Documents::default();
     let mut workspace = Workspace::default();
     let mut shutdown = false;
     let mut css_properties = true;
     let mut css_values = true;
+    let mut configuration = false;
+    let mut next_configuration = 0u64;
+    let mut pending = std::collections::HashMap::<String, (Value, Option<i64>)>::new();
     while let Ok(Some(body)) = receiver.recv() {
-        let message: Value = match serde_json::from_slice(&body) {
+        let mut message: Value = match serde_json::from_slice(&body) {
             Ok(value) => value,
             Err(_) => {
                 send(
@@ -111,9 +130,67 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
         };
+        if message.get("method").is_none() {
+            if let Some(id) = message["id"].as_str()
+                && let Some((mut request, version)) = pending.remove(id)
+            {
+                let uri = request["params"]["textDocument"]["uri"]
+                    .as_str()
+                    .unwrap_or("");
+                let request_id = request["id"].clone();
+                let error = if cancelled.lock().unwrap().remove(&request_id.to_string()) {
+                    Some((-32800, "Request cancelled"))
+                } else if documents.get(uri).map(|d| d.version) != version {
+                    Some((-32801, "Document changed during configuration"))
+                } else {
+                    None
+                };
+                if let Some((code, text)) = error {
+                    send(
+                        &mut output,
+                        json!({"jsonrpc":"2.0","id":request_id,"error":{"code":code,"message":text}}),
+                    )?;
+                } else {
+                    request["params"]["_formatSettings"] = message["result"][0].clone();
+                    message = request;
+                }
+                if error.is_some() {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+        }
         let method = message["method"].as_str().unwrap_or("");
         let params = &message["params"];
         let id = message.get("id");
+        if let Some(id) = id
+            && cancelled.lock().unwrap().remove(&id.to_string())
+        {
+            send(
+                &mut output,
+                json!({"jsonrpc":"2.0","id":id,"error":{"code":-32800,"message":"Request cancelled"}}),
+            )?;
+            continue;
+        }
+        if method == "textDocument/formatting"
+            && configuration
+            && params.get("_formatSettings").is_none()
+            && id.is_some()
+        {
+            next_configuration += 1;
+            let config_id = format!("crossbreeze.configuration.{next_configuration}");
+            let uri = params["textDocument"]["uri"].as_str().unwrap_or("");
+            pending.insert(
+                config_id.clone(),
+                (message.clone(), documents.get(uri).map(|d| d.version)),
+            );
+            send(
+                &mut output,
+                json!({"jsonrpc":"2.0","id":config_id,"method":"workspace/configuration","params":{"items":[{"scopeUri":uri,"section":"crossbreeze.formatting"}]}}),
+            )?;
+            continue;
+        }
         if method == "exit" {
             if !shutdown {
                 return Err("exit before shutdown".into());
@@ -126,6 +203,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             match method {
                 "initialize" => {
+                    configuration = params["capabilities"]["workspace"]["configuration"]
+                        .as_bool()
+                        .unwrap_or(false);
                     css_properties = params["initializationOptions"]["checkCssProperties"]
                         .as_bool()
                         .unwrap_or(true);
@@ -173,6 +253,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                             .watch(root, notify::RecursiveMode::Recursive)
                             .map_err(|e| e.to_string())?;
                     }
+                    watched_roots.extend(workspace.roots.clone());
+                    for root in workspace.asset_watch_roots() {
+                        if watched_roots.insert(root.clone()) {
+                            native_watcher
+                                .watch(&root, notify::RecursiveMode::Recursive)
+                                .map_err(|e| e.to_string())?;
+                        }
+                    }
                     _watcher = Some(native_watcher);
                     Ok(
                         json!({"capabilities":{"positionEncoding":"utf-16","textDocumentSync":2,"definitionProvider":true,"referencesProvider":true,"hoverProvider":true,"colorProvider":true,"completionProvider":{"triggerCharacters":[".","\"","'","<"]},"documentFormattingProvider":true,"semanticTokensProvider":{"legend":{"tokenTypes":xcss_language_service::TOKEN_TYPES,"tokenModifiers":["declaration"]},"full":true}},"serverInfo":{"name":"CrossBreeze","version":env!("CARGO_PKG_VERSION")}}),
@@ -183,7 +271,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     shutdown = true;
                     Ok(Value::Null)
                 }
-                "initialized" | "$/cancelRequest" => Ok(Value::Null),
+                "initialized" => Ok(Value::Null),
+                "$/cancelRequest" => {
+                    let requested = &params["id"];
+                    let waiting: Vec<_> = pending
+                        .iter()
+                        .filter(|(_, (request, _))| request["id"] == *requested)
+                        .map(|(key, _)| key.clone())
+                        .collect();
+                    for key in waiting {
+                        pending.remove(&key);
+                        cancelled.lock().unwrap().remove(&requested.to_string());
+                        send(&mut output,json!({"jsonrpc":"2.0","id":requested,"error":{"code":-32800,"message":"Request cancelled"}})).map_err(|e|e.to_string())?;
+                    }
+                    Ok(Value::Null)
+                }
                 "workspace/didChangeConfiguration" => {
                     let settings = &params["settings"]["crossbreeze"];
                     css_properties = settings["checkCssProperties"]
@@ -197,13 +299,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 "workspace/didChangeWatchedFiles" => {
                     workspace.refresh();
-                    let snapshot = workspace.snapshot();
-                    for (uri, document) in documents.iter().filter(|(_, d)| d.language_id == "xcss")
-                    {
+                    if let Some(watcher) = _watcher.as_mut() {
+                        for root in workspace.asset_watch_roots() {
+                            if watched_roots.insert(root.clone())
+                                && let Err(error) =
+                                    watcher.watch(&root, notify::RecursiveMode::Recursive)
+                            {
+                                eprintln!("Asset watcher: {error}");
+                            }
+                        }
+                    }
+                    for (uri, document) in documents.iter() {
                         if let Some(path) = workspace::path(uri) {
-                            let diagnostics = diagnostics(
-                                &snapshot,
-                                &FileId(workspace::uri(&path)),
+                            let diagnostics = project_diagnostics(
+                                &mut workspace,
+                                &path,
                                 css_properties,
                                 css_values,
                             );
@@ -323,7 +433,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     };
                     let pos = position(&params["position"]);
                     match method {
-                        "textDocument/definition" | "crossbreeze/navigation" => Ok(json!(snapshot.definition(&file,pos).iter().map(location).collect::<Vec<_>>())),
+                        "textDocument/definition" | "crossbreeze/navigation" => {
+                            let asset=crossbreeze::assets::urls(&snapshot.css_values(&file)).into_iter().find(|asset|(asset.range.start.line,asset.range.start.character)<=(pos.line,pos.character) && (pos.line,pos.character)<(asset.range.end.line,asset.range.end.character));
+                            if let Some(asset)=asset {
+                                let targets=workspace.resolve_asset(&path,&asset.value).filter(|p|p.is_file()).map(|p|json!({"uri":workspace::uri(&p),"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}}})).into_iter().collect::<Vec<_>>();
+                                Ok(json!(targets))
+                            } else { Ok(json!(snapshot.definition(&file,pos).iter().map(location).collect::<Vec<_>>())) }
+                        }
                         "textDocument/references" => Ok(json!(snapshot.references(&file,pos,params["context"]["includeDeclaration"].as_bool().unwrap_or(false)).iter().map(location).collect::<Vec<_>>())),
                         "textDocument/colorPresentation" => {
                             let range_value = &params["range"];
@@ -338,10 +454,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         "textDocument/documentColor" => Ok(json!(crossbreeze::css::colors(&snapshot.css_values(&file)))), 
                         "textDocument/hover" => Ok(snapshot.hover(&file,pos).map_or(Value::Null, |h| json!({"contents":{"kind":"plaintext","value":h.text},"range":range(&h.range)}))),
                         "textDocument/completion" => Ok(json!(snapshot.completion(&file,pos).iter().map(|c| json!({"label":c.label,"kind":if c.kind=="class" {7}else if c.kind=="variantGroup" {13}else{20},"textEdit":{"range":range(&c.range),"newText":c.new_text}})).collect::<Vec<_>>())),
-                        "textDocument/semanticTokens/full" => { let mut data=Vec::new(); let mut line=0; let mut character=0; let mut tokens=snapshot.semantic_tokens(&file); if typescript && let Some(document)=documents.get(uri) { for extra in crossbreeze::typescript::import_tokens(&document.text) { if !tokens.iter().any(|token|token.line==extra.line && token.character<extra.character+extra.length && extra.character<token.character+token.length) {tokens.push(extra);} } tokens.sort_by_key(|token|(token.line,token.character)); } for token in tokens { data.extend([token.line-line,if token.line==line {token.character-character}else{token.character},token.length,token.token_type,usize::from(token.declaration)]); line=token.line; character=token.character; } Ok(json!({"data":data})) }
+                        "textDocument/semanticTokens/full" => { let mut data=Vec::new(); let mut line=0; let mut character=0; let mut tokens=snapshot.semantic_tokens(&file); for extra in crossbreeze::css::tokens(&snapshot.css_values(&file)) { let function=xcss_language_service::TOKEN_TYPES.iter().position(|kind|*kind=="cssFunction").unwrap(); tokens.retain(|old| !(old.token_type==function && old.line==extra.line && old.character==extra.character)); if !tokens.iter().any(|old| old.line==extra.line && old.character<extra.character+extra.length && extra.character<old.character+old.length) {tokens.push(extra);} } tokens.sort_by_key(|token|(token.line,token.character)); if typescript && let Some(document)=documents.get(uri) { for extra in crossbreeze::typescript::import_tokens(&document.text) { if !tokens.iter().any(|token|token.line==extra.line && token.character<extra.character+extra.length && extra.character<token.character+token.length) {tokens.push(extra);} } tokens.sort_by_key(|token|(token.line,token.character)); } for token in tokens { data.extend([token.line-line,if token.line==line {token.character-character}else{token.character},token.length,token.token_type,usize::from(token.declaration)]); line=token.line; character=token.character; } Ok(json!({"data":data})) }
                         "textDocument/formatting" => {
                             let doc=documents.get(uri).ok_or("Document is not open")?;
-                            let options=xcss_format::FormatOptions { tab_width:params["options"]["tabSize"].as_u64().unwrap_or(2) as usize,use_tabs: !params["options"]["insertSpaces"].as_bool().unwrap_or(true),..Default::default() };
+                            let options=crossbreeze::formatting::options(&params["options"],&params["_formatSettings"])?;
                             let result=xcss_format::format(&doc.text,&options); let text=result.text.ok_or("Formatting failed")?;
                             let mut line=0; let mut character=0; for ch in doc.text.chars() { if ch=='\n' {line+=1;character=0;}else{character+=ch.len_utf16();} }
                             Ok(if text==doc.text {json!([])}else{json!([{"range":{"start":{"line":0,"character":0},"end":{"line":line,"character":character}},"newText":text}])})
@@ -352,6 +468,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         })();
         if let Some(id) = id {
+            let result = if cancelled.lock().unwrap().remove(&id.to_string()) {
+                send(
+                    &mut output,
+                    json!({"jsonrpc":"2.0","id":id,"error":{"code":-32800,"message":"Request cancelled"}}),
+                )?;
+                continue;
+            } else {
+                result
+            };
             send(
                 &mut output,
                 match result {

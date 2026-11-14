@@ -112,6 +112,81 @@ fn property(object: P<Node>, name: &str) -> Result<Option<P<Node>>, String> {
     Ok(found)
 }
 
+/// Returns only literal filesystem options; never executes project configuration.
+pub fn public_paths(source: &str) -> Option<(String, String)> {
+    let region = tsrs_core::arena::Region::new(1 << 20);
+    let _scope = region.enter();
+    let file = tsrs_parser::parse_source_file(
+        SourceFileParseOptions {
+            file_name: "/vite.config.ts".into(),
+            ..Default::default()
+        },
+        source,
+        ScriptKind::TS,
+    );
+    if !file.diagnostics().is_empty() {
+        return None;
+    }
+    let mut names = vec!["defineConfig".to_owned()];
+    for statement in file.statements.nodes() {
+        if statement.kind() == Kind::ImportDeclaration {
+            let import = statement.as_import_declaration();
+            if import.module_specifier.text() == "vite"
+                && let Some(clause) = import.import_clause()
+                && let Some(bindings) = clause.as_import_clause().named_bindings
+                && bindings.kind() == Kind::NamedImports
+            {
+                for item in bindings.as_named_imports().elements.nodes() {
+                    let item = item.as_import_specifier();
+                    if item.property_name().unwrap_or(item.name()).text() == "defineConfig" {
+                        names.push(item.name().text().into());
+                    }
+                }
+            }
+        }
+    }
+    let export = file
+        .statements
+        .nodes()
+        .iter()
+        .find(|n| n.kind() == Kind::ExportAssignment)?;
+    let mut expression = export.as_export_assignment().expression();
+    if expression.kind() == Kind::CallExpression {
+        let call = expression.as_call_expression();
+        if call.expression.kind() != Kind::Identifier
+            || !names.iter().any(|n| n == call.expression.text())
+            || call.arguments.nodes().len() != 1
+        {
+            return None;
+        }
+        expression = call.arguments.nodes()[0];
+    }
+    while matches!(
+        expression.kind(),
+        Kind::ParenthesizedExpression | Kind::AsExpression | Kind::SatisfiesExpression
+    ) {
+        expression = expression.expression()?;
+    }
+    if expression.kind() != Kind::ObjectLiteralExpression {
+        return None;
+    }
+    let literal = |name, default: &str| -> Option<String> {
+        match property(expression, name).ok()? {
+            None => Some(default.into()),
+            Some(value)
+                if matches!(
+                    value.kind(),
+                    Kind::StringLiteral | Kind::NoSubstitutionTemplateLiteral
+                ) =>
+            {
+                Some(value.text().into())
+            }
+            _ => None,
+        }
+    };
+    Some((literal("root", ".")?, literal("publicDir", "public")?))
+}
+
 #[cfg(test)]
 pub fn edit(source: &str, react: bool) -> Result<String, String> {
     edit_config(source, react, None)
@@ -440,6 +515,28 @@ pub fn edit_config(source: &str, react: bool, config: Option<&str>) -> Result<St
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn public_paths_accept_literals_and_reject_uncertain_exports() {
+        assert_eq!(
+            public_paths(
+                "import {defineConfig as cfg} from 'vite'; export default cfg({root:'web',publicDir:'static'});"
+            ),
+            Some(("web".into(), "static".into()))
+        );
+        assert_eq!(
+            public_paths("export default {};"),
+            Some((".".into(), "public".into()))
+        );
+        for source in [
+            "export default {publicDir:false}",
+            "export default {publicDir:getDirectory()}",
+            "export default () => ({})",
+            "export default {...settings}",
+            "export default {publicDir:'a',publicDir:'b'}",
+        ] {
+            assert!(public_paths(source).is_none(), "{source}");
+        }
+    }
     #[test]
     fn migrates_legacy_import_and_targets_the_selected_application() {
         let source = "import { defineConfig, lazyPlugins as lazy } from 'vite-plus'; import css from '@cross-css/vite-plugin'; import react from '@vitejs/plugin-react'; export default defineConfig({ plugins: lazy(() => [css(), react()]) });";

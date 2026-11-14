@@ -197,5 +197,4 @@ then run:
 The native bundle manifest records the target, build profile, dependency notices,
 and SHA-256 hashes. Archive verification rejects debug bundles, missing files,
 and Node artifacts. CrossBreeze consumes XCSS 0.13.0 from crates.io, pinned in
-Cargo.lock. The old server/ TypeScript sources remain as migration reference;
-the current launchers and Gradle build use the Rust executable.
+Cargo.lock. The launchers, setup planner, and Gradle build use the Rust executable.

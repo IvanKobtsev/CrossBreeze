@@ -135,3 +135,7 @@ tasks.withType<Zip>().configureEach {
         permissions { unix("rwxr-xr-x") }
     }
 }
+
+tasks.named<Test>("test") {
+    inputs.dir(bundleDirectory.dir(hostTarget))
+}
