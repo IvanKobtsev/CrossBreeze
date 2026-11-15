@@ -76,7 +76,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if !metadata.status.success() {
         return Err("Cargo dependency metadata failed".into());
     }
-    let metadata: Value = serde_json::from_slice(&metadata.stdout)?;
+    let mut metadata: Value = serde_json::from_slice(&metadata.stdout)?;
     let executable = if name.starts_with("windows-") {
         "crossbreeze.exe"
     } else {
@@ -91,7 +91,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if triple != host {
         artifact = artifact.join(triple);
     }
-    let artifact = artifact.join(profile).join(executable);
+    let artifact_directory = artifact.join(profile);
+    let artifact = artifact_directory.join(executable);
     let destination = root.join("dist/native").join(name).join("server");
     if !destination.starts_with(root.join("dist/native")) {
         return Err("Invalid staging destination".into());
@@ -101,11 +102,84 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     fs::create_dir_all(destination.join("licenses"))?;
     fs::copy(artifact, destination.join(executable))?;
+    let cli = if name.starts_with("windows-") {
+        "xcss.exe"
+    } else {
+        "xcss"
+    };
+    let cli_root = root.join("target/cli").join(name).join(profile);
+    let mut install = Command::new(&cargo);
+    install
+        .env("CARGO_TARGET_DIR", root.join("target"))
+        .args([
+            "install",
+            "xcss-cli",
+            "--version",
+            "=0.14.1",
+            "--locked",
+            "--root",
+        ])
+        .arg(&cli_root);
+    if triple != host {
+        install.args(["--target", triple]);
+    }
+    if debug {
+        install.arg("--debug");
+    }
+    if !install.status()?.success() {
+        return Err("XCSS CLI build failed".into());
+    }
+    fs::copy(cli_root.join("bin").join(cli), destination.join(cli))?;
+    // Include the CLI lockfile and its complete dependency notices as well as the server's.
+    let home = std::env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(
+                std::env::var_os("USERPROFILE")
+                    .or_else(|| std::env::var_os("HOME"))
+                    .expect("Cargo home"),
+            )
+            .join(".cargo")
+        });
+    let source = fs::read_dir(home.join("registry/src"))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().join("xcss-cli-0.14.1"))
+        .find(|path| path.is_dir())
+        .ok_or("Missing CLI source for notices")?;
+    let cli_metadata = Command::new(&cargo)
+        .args([
+            "metadata",
+            "--locked",
+            "--format-version",
+            "1",
+            "--filter-platform",
+            triple,
+            "--manifest-path",
+        ])
+        .arg(source.join("Cargo.toml"))
+        .output()?;
+    if !cli_metadata.status.success() {
+        return Err(String::from_utf8_lossy(&cli_metadata.stderr)
+            .into_owned()
+            .into());
+    }
+    let cli_metadata: Value = serde_json::from_slice(&cli_metadata.stdout)?;
+    metadata["packages"]
+        .as_array_mut()
+        .unwrap()
+        .extend(cli_metadata["packages"].as_array().unwrap().iter().cloned());
+    fs::copy(
+        source.join("Cargo.lock"),
+        destination.join("cli-Cargo.lock"),
+    )?;
     fs::copy(root.join("Cargo.lock"), destination.join("Cargo.lock"))?;
     let mut hashes = BTreeMap::new();
     record(&destination, executable, &mut hashes)?;
+    record(&destination, cli, &mut hashes)?;
     record(&destination, "Cargo.lock", &mut hashes)?;
+    record(&destination, "cli-Cargo.lock", &mut hashes)?;
     let mut packages = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
     for package in metadata["packages"].as_array().ok_or("Missing packages")? {
         if package["name"] == "crossbreeze-build" {
             continue;
@@ -115,6 +189,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             package["name"].as_str().unwrap(),
             package["version"].as_str().unwrap()
         );
+        if !seen.insert(id.clone()) {
+            continue;
+        }
         let path = Path::new(package["manifest_path"].as_str().unwrap())
             .parent()
             .unwrap();
@@ -140,7 +217,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     fs::write(
         destination.join("native-manifest.json"),
         serde_json::to_vec_pretty(
-            &json!({"target":name,"rustTarget":triple,"profile":profile,"files":hashes,"packages":packages}),
+            &json!({"target":name,"rustTarget":triple,"profile":profile,"cliVersion":"0.14.1","files":hashes,"packages":packages}),
         )?,
     )?;
     println!("Staged native server at {}", destination.display());

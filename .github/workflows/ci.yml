@@ -42,6 +42,16 @@ jobs:
           if ($LASTEXITCODE) { throw 'Native server smoke test failed' }
           '[]' | & $binary vite-setup
           if ($LASTEXITCODE) { throw 'Native setup smoke test failed' }
+          $cliName = if ($IsWindows) { 'xcss.exe' } else { 'xcss' }
+          $cli = Join-Path $PWD "dist/native/$env:DISTRIBUTION/server/$cliName"
+          $smokeRoot = Join-Path $env:RUNNER_TEMP 'crossbreeze-cli-smoke'
+          New-Item -ItemType Directory -Force $smokeRoot | Out-Null
+          '{"cross-figma":{"output":"generated"}}' | Set-Content (Join-Path $smokeRoot 'xcss.config.json')
+          '{"format":"crossfigma.snapshot","version":1,"collections":[],"variables":[],"styles":{"text":[],"paint":[],"effect":[],"grid":[]}}' | Set-Content (Join-Path $smokeRoot 'snapshot.json')
+          & $cli cross-figma import (Join-Path $smokeRoot 'snapshot.json') --root $smokeRoot
+          if ($LASTEXITCODE) { throw 'Bundled CLI import smoke test failed' }
+          & $cli cross-figma update (Join-Path $smokeRoot 'snapshot.json') --root $smokeRoot
+          if ($LASTEXITCODE) { throw 'Bundled CLI update smoke test failed' }
       - uses: actions/upload-artifact@v4
         with:
           name: native-${{ matrix.distribution }}
@@ -69,7 +79,7 @@ jobs:
             target="${bundle##*/native-}"
             mv "$bundle" "dist/native/$target"
           done
-          chmod +x dist/native/linux-*/server/crossbreeze dist/native/mac-*/server/crossbreeze gradlew
+          chmod +x dist/native/linux-*/server/crossbreeze dist/native/mac-*/server/crossbreeze dist/native/linux-*/server/xcss dist/native/mac-*/server/xcss gradlew
       - run: ./gradlew test verifyPlugin verifyPluginArchive -Pcrossbreeze.prebuiltNative=true --stacktrace
       - name: Upload plugin test diagnostics
         if: failure()

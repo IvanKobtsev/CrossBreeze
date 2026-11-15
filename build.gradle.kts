@@ -75,7 +75,7 @@ abstract class VerifyPluginArchive : DefaultTask() {
     @TaskAction fun verify() {
         val zips = archives.files.associateBy { it.name }
         val expected = targets.get()
-        check(zips.keys == expected.keys.map { "${baseName.get()}-$it.zip" }.toSet()) { "Expected all six native plugin archives" }
+        check(zips.keys == expected.keys.map { "${baseName.get()}-$it.zip" }.toSet()) { "Expected native archives for the configured targets" }
         for (target in expected.keys) {
             val archive = zips.getValue("${baseName.get()}-$target.zip")
             ZipFile(archive).use { zip ->
@@ -86,10 +86,11 @@ abstract class VerifyPluginArchive : DefaultTask() {
                 val server = manifestPath.removeSuffix("native-manifest.json")
                 val manifest = zip.getInputStream(zip.getEntry(manifestPath)).use { JsonSlurper().parse(it) as Map<*, *> }
                 check(manifest["target"] == target)
+                check(manifest["cliVersion"] == "0.14.1")
                 check(manifest["profile"] == "release") { "Debug executable in release archive" }
                 val hashes = manifest["files"] as Map<*, *>
                 val executable = if (target.startsWith("windows-")) "crossbreeze.exe" else "crossbreeze"
-                check(hashes.containsKey(executable) && hashes.containsKey("Cargo.lock"))
+                check(hashes.containsKey(executable) && hashes.containsKey(if (target.startsWith("windows-")) "xcss.exe" else "xcss") && hashes.containsKey("Cargo.lock") && hashes.containsKey("cli-Cargo.lock"))
                 check(entries.filter { it.startsWith(server) }.toSet() == hashes.keys.map { server + it }.toSet() + manifestPath) { "Unmanifested native files" }
                 for ((path, hash) in hashes) {
                     val bytes = zip.getInputStream(checkNotNull(zip.getEntry(server + path))).use { it.readBytes() }
@@ -131,11 +132,21 @@ tasks.register<VerifyPluginArchive>("verifyPluginArchive") {
 }
 
 tasks.withType<Zip>().configureEach {
-    filesMatching("**/server/crossbreeze") {
+    filesMatching(listOf("**/server/crossbreeze", "**/server/xcss")) {
         permissions { unix("rwxr-xr-x") }
     }
 }
 
 tasks.named<Test>("test") {
     inputs.dir(bundleDirectory.dir(hostTarget))
+}
+
+
+
+// Local verification can validate the host archive without cross-compiling five toolchains.
+tasks.register<VerifyPluginArchive>("verifyHostPluginArchive") {
+    dependsOn("buildPluginVariants_${hostTarget.replace('-', '_')}")
+    archives.from(layout.buildDirectory.file("distributions/${project.name}-${project.version}-$hostTarget.zip"))
+    targets.set(mapOf(hostTarget to nativeTargets.getValue(hostTarget)))
+    baseName.set("${project.name}-${project.version}")
 }
