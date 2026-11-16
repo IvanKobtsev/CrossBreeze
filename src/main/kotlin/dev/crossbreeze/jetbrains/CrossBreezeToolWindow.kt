@@ -98,15 +98,17 @@ internal object SnapshotReceiver {
 
 class CrossBreezeToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
-        val pluginRoot = requireNotNull(javaClass.classLoader as? PluginAwareClassLoader) {
+        val panel = CrossBreezeImportPanel(project) {
+            requireNotNull(javaClass.classLoader as? PluginAwareClassLoader) {
             "CrossBreeze plugin descriptor is unavailable"
-        }.pluginDescriptor.pluginPath
-        val panel = CrossBreezeImportPanel(project, pluginRoot)
+            }.pluginDescriptor.pluginPath
+        }
         toolWindow.contentManager.addContent(ContentFactory.getInstance().createContent(panel.component, "", false).apply { setDisposer(panel) })
     }
 }
 
-internal class CrossBreezeImportPanel(private val project: Project, private val pluginRoot: Path) : Disposable {
+internal class CrossBreezeImportPanel(private val project: Project, private val pluginRoot: () -> Path) : Disposable {
+    constructor(project: Project, pluginRoot: Path) : this(project, { pluginRoot })
     val component = JPanel(BorderLayout())
     private val state = project.service<CrossBreezeImportState>().state
     private var root = Path.of(state.target.ifBlank { project.basePath ?: "." }).toAbsolutePath().normalize()
@@ -284,7 +286,7 @@ internal class CrossBreezeImportPanel(private val project: Project, private val 
         com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().saveAllDocuments()
         val updating = generatedFilesExist() || root.toString() in state.generated
         require(!updating || Files.isRegularFile(root.resolve(output.text).resolve(".cross-figma.json"))) { "Update needs a baseline from CLI 0.14.1. Import the previous snapshot with CLI 0.14.1 first, then retry." }
-        val binary = pluginRoot.resolve("server/" + if (com.intellij.openapi.util.SystemInfo.isWindows) "xcss.exe" else "xcss")
+        val binary = pluginRoot().resolve("server/" + if (com.intellij.openapi.util.SystemInfo.isWindows) "xcss.exe" else "xcss")
         require(Files.isRegularFile(binary)) { "Bundled XCSS CLI is missing. Reinstall CrossBreeze." }
         SnapshotReceiver.stop(this)
         setEnabled(content, false); status.text = if (updating) "Updating XCSS…" else "Generating XCSS…"
