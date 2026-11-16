@@ -39,6 +39,18 @@ class XcssNavigationHandler : GotoDeclarationHandler {
         val virtualFile = file.virtualFile ?: return null
         if (virtualFile.extension !in setOf("xcss", "ts", "tsx", "mts", "cts")) return null
         if (ApplicationManager.getApplication().isDispatchThread) return null
+        // Native JS/TS references must keep WebStorm's navigation and hover target.
+        // In particular, do not pay for a server round trip on React imports.
+        if (virtualFile.extension != "xcss") {
+            val imports = Regex("""import\s*\{([^}]+)}\s*from\s*["'][^"']+\.xcss["']""")
+                .findAll(file.text).flatMap { match ->
+                    match.groupValues[1].split(',').asSequence().map { it.trim().split(Regex("\\s+as\\s+" )).last().trim() }
+                }.toSet()
+            val prefix = editor.document.charsSequence.subSequence(0, offset).toString()
+            val root = Regex("""([A-Za-z_$][\w$]*)(?:\s*\.\s*[\w$]*)*$""").find(prefix)?.groupValues?.get(1)
+            val word = sourceElement.text
+            if (root !in imports && word !in imports) return null
+        }
         val client = LspClientManager.getInstance(file.project).getClients(CrossBreezeLspIntegrationProvider::class.java)
             .firstOrNull { it.state == LspServerState.Running && it.descriptor.isSupportedFile(virtualFile) } ?: return null
         val document = editor.document
@@ -80,6 +92,9 @@ class XcssNavigationHandler : GotoDeclarationHandler {
         if (usages.isEmpty()) return if (virtualFile.extension == "xcss") emptyArray() else null
         return arrayOf(object : FakePsiElement() {
             override fun getParent(): PsiElement = sourceElement
+            override fun getContainingFile(): PsiFile = usages.first().file
+            override fun getTextRange(): TextRange = usages.first().range
+            override fun getTextOffset(): Int = textRange.startOffset
             override fun getName() = sourceElement.text
             override fun canNavigate() = true
             override fun canNavigateToSource() = true
