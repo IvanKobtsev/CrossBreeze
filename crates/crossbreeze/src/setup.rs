@@ -249,7 +249,7 @@ pub fn plan(input: &Input) -> Option<Plan> {
     if let Some(entry) = &config_entry
         && selected.is_none()
     {
-        result.step(entry,"Select the application tsconfig and point xcss({ tsconfig: … }) at it. Setup could not identify one TypeScript application.");
+        result.step(entry,"Select the application tsconfig and set the tsconfig field in xcss.config.json. Setup could not identify one TypeScript application.");
         return Some(result);
     }
     let config = selected.as_ref().map(|(path, _)| path.clone());
@@ -275,13 +275,8 @@ pub fn plan(input: &Input) -> Option<Plan> {
         })
     });
     // Existing dynamic configuration must never be overwritten by a generated file.
-    let explicit_config = config
-        .as_ref()
-        .filter(|p| **p != input.root.join("tsconfig.json"))
-        .and_then(|p| p.strip_prefix(&input.root).ok())
-        .map(|p| format!("./{}", p.to_string_lossy().replace('\\', "/")));
     let existing_vite = if let Some(source) = input.read(&vite_path) {
-        match crate::vite::edit_config(&source, react, explicit_config.as_deref()) {
+        match crate::vite::edit_config(&source, react, None) {
             Ok(after) => Some(after),
             Err(message) => {
                 result.step(&vite_path, message);
@@ -296,15 +291,7 @@ pub fn plan(input: &Input) -> Option<Plan> {
     if react && dependencies.contains_key("@vitejs/plugin-react") {
         vite.push_str("import react from \"@vitejs/plugin-react\";\n");
     }
-    let xcss_call = explicit_config.as_ref().map_or_else(
-        || "xcss()".into(),
-        |config| {
-            format!(
-                "xcss({{ tsconfig: {} }})",
-                serde_json::to_string(config).unwrap()
-            )
-        },
-    );
+    let xcss_call = String::from("xcss()");
     let plugins = if react && dependencies.contains_key("@vitejs/plugin-react") {
         format!("{xcss_call}, react({{ jsxImportSource: \"{RUNTIME}\" }})")
     } else {
@@ -347,6 +334,47 @@ pub fn plan(input: &Input) -> Option<Plan> {
             config_path,
             root.to_string(),
             "Configure the XCSS JSX runtime",
+        );
+    }
+    let xcss_path = input.root.join("xcss.config.json");
+    if let Some(source) = input.read(&xcss_path) {
+        let settings = serde_json::from_str::<Value>(&source).ok();
+        if settings.as_ref().is_none_or(|v| !v.is_object()) {
+            result.step(
+                &xcss_path,
+                "Fix the XCSS JSON configuration before applying setup.",
+            );
+            result.edits.clear();
+            return Some(result);
+        }
+        let mut settings = settings.unwrap();
+        if let Some(path) = &config {
+            let relative = path.strip_prefix(&input.root).ok()?;
+            let target = format!("./{}", relative.to_string_lossy().replace('\\', "/"));
+            if settings["tsconfig"] != target {
+                settings["tsconfig"] = Value::String(target);
+                result.edit(
+                    input,
+                    &xcss_path,
+                    format!("{}\n", serde_json::to_string_pretty(&settings).ok()?),
+                    "Configure the XCSS application tsconfig",
+                );
+            }
+        }
+    } else {
+        let mut settings = serde_json::json!({});
+        if let Some(path) = &config {
+            let relative = path.strip_prefix(&input.root).ok()?;
+            settings["tsconfig"] = Value::String(format!(
+                "./{}",
+                relative.to_string_lossy().replace('\\', "/")
+            ));
+        }
+        result.edit(
+            input,
+            &xcss_path,
+            format!("{}\n", serde_json::to_string_pretty(&settings).ok()?),
+            "Create the XCSS project configuration",
         );
     }
     result.edit(input, &vite_path, vite, "Configure the XCSS Vite plugin");
@@ -460,7 +488,7 @@ mod tests {
             "{\n // retain me\n \"include\": [\"src\"]\n}".into(),
         );
         let result = plan(&input).unwrap();
-        assert_eq!(result.edits.len(), 3);
+        assert_eq!(result.edits.len(), 4);
         let config = result
             .edits
             .iter()
