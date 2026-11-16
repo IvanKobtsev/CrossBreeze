@@ -4,8 +4,7 @@ import com.google.gson.*
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.*
-import com.intellij.ide.plugins.PluginManagerCore
-import com.intellij.openapi.extensions.PluginId
+import com.intellij.ide.plugins.cl.PluginAwareClassLoader
 import com.intellij.openapi.fileChooser.*
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
@@ -99,9 +98,9 @@ internal object SnapshotReceiver {
 
 class CrossBreezeToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
-        val pluginRoot = requireNotNull(PluginManagerCore.getPlugin(PluginId.getId("dev.crossbreeze.jetbrains"))) {
+        val pluginRoot = requireNotNull(javaClass.classLoader as? PluginAwareClassLoader) {
             "CrossBreeze plugin descriptor is unavailable"
-        }.pluginPath
+        }.pluginDescriptor.pluginPath
         val panel = CrossBreezeImportPanel(project, pluginRoot)
         toolWindow.contentManager.addContent(ContentFactory.getInstance().createContent(panel.component, "", false).apply { setDisposer(panel) })
     }
