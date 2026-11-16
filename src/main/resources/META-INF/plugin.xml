@@ -12,7 +12,7 @@
   <depends>com.intellij.modules.lsp</depends>
   <depends>JavaScript</depends>
   <extensions defaultExtensionNs="com.intellij">
-    <toolWindow id="CrossBreeze" anchor="right" factoryClass="dev.crossbreeze.jetbrains.CrossBreezeToolWindowFactory" icon="/icons/xcss.svg"/>
+    <toolWindow id="CrossBreeze" anchor="right" factoryClass="dev.crossbreeze.jetbrains.CrossBreezeToolWindowFactory" icon="/icons/xcssToolWindow.svg"/>
     <fileType name="XCSS" language="XCSS" extensions="xcss" implementationClass="dev.crossbreeze.jetbrains.XcssFileType" fieldName="INSTANCE"/>
     <editorNotificationProvider implementation="dev.crossbreeze.jetbrains.XcssTypescriptSetupNotification"/>
     <postStartupActivity implementation="dev.crossbreeze.jetbrains.ViteSetupStartup"/>

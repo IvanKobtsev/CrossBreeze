@@ -27,12 +27,11 @@ class CrossBreezeStatusWidgetFactory : StatusBarWidgetFactory {
     override fun createWidget(project: Project): StatusBarWidget = CrossBreezeStatusWidget(project)
     override fun canBeEnabledOn(statusBar: StatusBar) = true
 }
-private class CrossBreezeStatusWidget(private val project: Project) : StatusBarWidget, StatusBarWidget.TextPresentation {
+private class CrossBreezeStatusWidget(private val project: Project) : StatusBarWidget, StatusBarWidget.IconPresentation {
     override fun ID() = "CrossBreeze"
     override fun getPresentation() = this
-    override fun getText() = "CrossBreeze: ${project.service<CrossBreezeRuntime>().status}"
-    override fun getAlignment() = 0f
-    override fun getTooltipText() = "XCSS language service. Click to restart."
+    override fun getIcon() = XcssFileType.INSTANCE.icon
+    override fun getTooltipText() = "XCSS language service: ${project.service<CrossBreezeRuntime>().status}. Click to restart."
     override fun getClickConsumer() = Consumer<MouseEvent> { CrossBreezeRestartAction.restart(project) }
     override fun install(statusBar: StatusBar) = Unit
     override fun dispose() = Unit
