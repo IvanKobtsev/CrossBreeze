@@ -18,6 +18,7 @@ dependencies {
     intellijPlatform {
         webstorm("2026.3")
         bundledPlugin("JavaScript")
+        pluginVerifier()
         testFramework(TestFrameworkType.Platform)
     }
     testImplementation(kotlin("test"))
