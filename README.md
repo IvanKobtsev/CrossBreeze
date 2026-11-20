@@ -196,7 +196,7 @@ then run:
 
 The native bundle manifest records the target, build profile, dependency notices,
 and SHA-256 hashes. Archive verification rejects debug bundles, missing files,
-and Node artifacts. CrossBreeze consumes XCSS 0.13.0 from crates.io, pinned in
+and Node artifacts. CrossBreeze consumes XCSS 0.15.0 from crates.io, pinned in
 Cargo.lock. The launchers, setup planner, and Gradle build use the Rust executable.
 
 ### Guided CrossFigma import
@@ -211,10 +211,10 @@ window, choose the output directory, and map collection modes to themes and
 screens. Each mapping row selects one collection; repeat the theme/screen name
 for additional collections. Screens also require a media query. Unit mappings
 support exact token names and prefixes. Save configuration, then choose
-**Generate XCSS** to run the bundled XCSS CLI 0.14.1 without Node.js.
+**Generate XCSS** to run the bundled XCSS CLI 0.15.0 without Node.js.
 
 Snapshots and successful-generation state are retained in local IDE workspace
 settings. Existing generations use **Update XCSS** to refresh tokens and migrate
 XCSS references. Updates require the `.cross-figma.json` baseline created by CLI
-0.14.1 import. For older generated files, import the previous snapshot with CLI
-0.14.1 first.
+0.15.0 import. For older generated files, import the previous snapshot with CLI
+0.15.0 first.

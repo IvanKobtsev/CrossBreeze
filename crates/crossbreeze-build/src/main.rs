@@ -115,7 +115,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "install",
             "xcss-cli",
             "--version",
-            "=0.14.1",
+            "=0.15.0",
             "--locked",
             "--root",
         ])
@@ -143,7 +143,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         });
     let source = fs::read_dir(home.join("registry/src"))?
         .filter_map(Result::ok)
-        .map(|entry| entry.path().join("xcss-cli-0.14.1"))
+        .map(|entry| entry.path().join("xcss-cli-0.15.0"))
         .find(|path| path.is_dir())
         .ok_or("Missing CLI source for notices")?;
     let cli_metadata = Command::new(&cargo)
@@ -217,7 +217,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     fs::write(
         destination.join("native-manifest.json"),
         serde_json::to_vec_pretty(
-            &json!({"target":name,"rustTarget":triple,"profile":profile,"cliVersion":"0.14.1","files":hashes,"packages":packages}),
+            &json!({"target":name,"rustTarget":triple,"profile":profile,"cliVersion":"0.15.0","files":hashes,"packages":packages}),
         )?,
     )?;
     println!("Staged native server at {}", destination.display());

@@ -86,7 +86,7 @@ abstract class VerifyPluginArchive : DefaultTask() {
                 val server = manifestPath.removeSuffix("native-manifest.json")
                 val manifest = zip.getInputStream(zip.getEntry(manifestPath)).use { JsonSlurper().parse(it) as Map<*, *> }
                 check(manifest["target"] == target)
-                check(manifest["cliVersion"] == "0.14.1")
+                check(manifest["cliVersion"] == "0.15.0")
                 check(manifest["profile"] == "release") { "Debug executable in release archive" }
                 val hashes = manifest["files"] as Map<*, *>
                 val executable = if (target.startsWith("windows-")) "crossbreeze.exe" else "crossbreeze"

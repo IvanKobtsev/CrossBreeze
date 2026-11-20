@@ -120,8 +120,8 @@ dependencies = [
  "url",
  "xcss-format",
  "xcss-language-service",
- "xcss-source 0.14.1",
- "xcss-syntax 0.14.1",
+ "xcss-source",
+ "xcss-syntax",
 ]
 
 [[package]]
@@ -1516,74 +1516,58 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "xcss-analysis"
-version = "0.14.1"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c18594fdd3e3dcb17921b53c0a35de4fe4511816007d10e98e9c49c3f7b8fe9a"
+checksum = "a0bd097845211321c3ebba73f0635c2f32f3171cc460c1b360108b5ba85277e7"
 dependencies = [
- "xcss-source 0.14.1",
- "xcss-syntax 0.14.1",
+ "xcss-source",
+ "xcss-syntax",
 ]
 
 [[package]]
 name = "xcss-format"
-version = "0.13.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b114c7ad738a13366ebb7aca3f3b54c344d4bda4c3b8372788b45fab09b94d5a"
+checksum = "20047368e64c8a90873af79aebf204249b40616296e73d96787559432082fe46"
 dependencies = [
  "malva",
- "xcss-source 0.13.0",
- "xcss-syntax 0.13.0",
+ "xcss-source",
+ "xcss-syntax",
 ]
 
 [[package]]
 name = "xcss-language-service"
-version = "0.14.1"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c39d52706d1a86762b9d415c4ca237f4a4bae6a975f235ba2f09ba91fb381422"
+checksum = "43a710ba3f96eefcac99f30c15634a6d85d50a2b1329390fd3695e7089e189de"
 dependencies = [
  "xcss-analysis",
- "xcss-source 0.14.1",
- "xcss-syntax 0.14.1",
+ "xcss-source",
+ "xcss-syntax",
  "xcss-typescript",
 ]
 
 [[package]]
 name = "xcss-source"
-version = "0.13.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7d05480a3005eb422fa32ad5622f8d8fdee470364e2418dedb8638e1b82d91f"
-
-[[package]]
-name = "xcss-source"
-version = "0.14.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c2275f61a0da248c0e9d8005a58669cffa70f1723c104a1f3f5820c9467ede0"
+checksum = "780ff50a6735b270ce7787055882156a7f26805f3551c1237cda9f8e4ac3b2ab"
 
 [[package]]
 name = "xcss-syntax"
-version = "0.13.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b70f11ab342bfef31ea173a5d72d7f4d1a87d94ffab0773d5b9d7d9023bc844"
+checksum = "6128dccc235e408ac8bf8de0c96bbcbe091b2b808fa9f336ff6e08d1d36bd89e"
 dependencies = [
  "raffia 0.13.0",
- "xcss-source 0.13.0",
-]
-
-[[package]]
-name = "xcss-syntax"
-version = "0.14.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5d3c8f48ae61a26ebe387e631e88086fe7ce0e6ae00a65b29acb4e31387ffab"
-dependencies = [
- "raffia 0.13.0",
- "xcss-source 0.14.1",
+ "xcss-source",
 ]
 
 [[package]]
 name = "xcss-typescript"
-version = "0.14.1"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e268816a5a0ab9119b549f9ac8e2af4cc64578fa41365bb72a67d4a00f290913"
+checksum = "47da30778ecece82811c2ba1e8a68ae8ab17cd80a7d46c36c5708d5662924bbb"
 dependencies = [
  "serde_json",
  "tsrs_ast",
@@ -1594,7 +1578,7 @@ dependencies = [
  "tsrs_tsoptions",
  "tsrs_vfs",
  "xcss-analysis",
- "xcss-source 0.14.1",
+ "xcss-source",
 ]
 
 [[package]]

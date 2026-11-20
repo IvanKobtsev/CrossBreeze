@@ -9,7 +9,7 @@ publish.workspace = true
 xcss-language-service.workspace = true
 xcss-format.workspace = true
 xcss-source.workspace = true
-xcss-syntax = "=0.14.1"
+xcss-syntax = "=0.15.0"
 serde_json = "1"
 url = "2"
 notify = "8"
