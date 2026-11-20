@@ -132,8 +132,8 @@ fn semantic(
     let mut data = Vec::new();
     let mut line = 0;
     let mut character = 0;
-    let mut tokens = snapshot.semantic_tokens(&file);
-    for extra in crossbreeze::css::tokens(&snapshot.css_values(&file)) {
+    let mut tokens = snapshot.semantic_tokens(file);
+    for extra in crossbreeze::css::tokens(&snapshot.css_values(file)) {
         let function = xcss_language_service::TOKEN_TYPES
             .iter()
             .position(|kind| *kind == "cssFunction")

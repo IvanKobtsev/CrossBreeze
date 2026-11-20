@@ -574,10 +574,10 @@ impl Workspace {
                 .filter(|(p, _)| p.extension().is_some_and(|e| e == "xcss"))
                 .map(|(p, t)| (p.clone(), t.clone())),
         );
-        if let Some((previous, snapshot)) = &self.cached_xcss {
-            if previous == &current {
-                return snapshot.clone();
-            }
+        if let Some((previous, snapshot)) = &self.cached_xcss
+            && previous == &current
+        {
+            return snapshot.clone();
         }
         self.revision += 1;
         let mut service = std::mem::take(&mut self.xcss_service);
