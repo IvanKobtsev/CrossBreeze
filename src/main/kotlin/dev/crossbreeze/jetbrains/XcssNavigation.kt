@@ -28,6 +28,8 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.CompletableFuture
 
 interface CrossBreezeLanguageServer : org.eclipse.lsp4j.services.LanguageServer {
+    @org.eclipse.lsp4j.jsonrpc.services.JsonRequest("crossbreeze/status")
+    fun status(): CompletableFuture<String>
     @org.eclipse.lsp4j.jsonrpc.services.JsonRequest("crossbreeze/navigation")
     fun navigation(params: TextDocumentPositionParams): CompletableFuture<List<Location>>
 }

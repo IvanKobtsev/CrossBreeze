@@ -135,6 +135,17 @@ internal class CrossBreezeImportPanel(private val project: Project, private val 
     private fun attempt(action: () -> Unit) { try { action() } catch (e: Exception) { status.text = e.message ?: "Operation failed" } }
     private fun render() {
         content.removeAll(); tables.clear()
+        content.add(button("Inspect language service") {
+            ApplicationManager.getApplication().executeOnPooledThread {
+                val report = try {
+                    val client = com.intellij.platform.lsp.api.LspClientManager.getInstance(project)
+                        .getClients(CrossBreezeLspIntegrationProvider::class.java).firstOrNull()
+                    client?.sendRequestSync(3000) { (it as CrossBreezeLanguageServer).status() }
+                        ?: "Language service is not running. Open an XCSS or TypeScript file."
+                } catch (error: Exception) { error.message ?: "Status request failed" }
+                ApplicationManager.getApplication().invokeLater { if (!disposed) diagnostics.text = report }
+            }
+        })
         content.add(JBLabel("Target: $root"))
         content.add(button("Choose project/package directory") {
             if (!discard()) return@button

@@ -45,42 +45,216 @@ fn diagnostics(
 fn send(output: &mut impl io::Write, value: Value) -> io::Result<()> {
     transport::write_message(output, &serde_json::to_vec(&value)?)
 }
-fn project_diagnostics(
-    workspace: &mut Workspace,
-    path: &std::path::Path,
+struct AnalysisJob {
+    uri: String,
+    version: i64,
+    generation: u64,
+    snapshot: crossbreeze::ServiceSnapshot,
+    file: FileId,
     properties: bool,
     values: bool,
-) -> Vec<Value> {
-    if path
-        .extension()
-        .is_some_and(|ext| ["ts", "tsx", "mts", "cts"].iter().any(|e| ext == *e))
-    {
-        if let Some((snapshot, anchor)) = workspace.typescript_snapshot(path) {
+    assets: Vec<Value>,
+}
+fn schedule_diagnostics(
+    workspace: &mut Workspace,
+    documents: &Documents,
+    properties: bool,
+    values: bool,
+    generation: u64,
+    jobs: &std::sync::Arc<(
+        std::sync::Mutex<std::collections::BTreeMap<String, AnalysisJob>>,
+        std::sync::Condvar,
+    )>,
+) {
+    let mut queue = jobs.0.lock().unwrap();
+    queue.clear();
+    for (uri, document) in documents.iter() {
+        let path = workspace::path(uri);
+        let typescript = path.as_ref().is_some_and(|p| {
+            p.extension()
+                .is_some_and(|e| ["ts", "tsx", "mts", "cts"].iter().any(|x| e == *x))
+        });
+        let (snapshot, file) = if typescript {
+            let Some((snapshot, anchor)) = workspace.typescript_snapshot(path.as_ref().unwrap())
+            else {
+                continue;
+            };
             let file = FileId(
-                path.strip_prefix(anchor)
+                path.as_ref()
+                    .unwrap()
+                    .strip_prefix(anchor)
                     .unwrap()
                     .to_string_lossy()
                     .replace('\\', "/"),
             );
-            return diagnostics(&snapshot, &file, false, false);
+            (snapshot, file)
+        } else if path.is_some() {
+            (
+                workspace.snapshot(),
+                FileId(workspace::uri(path.as_ref().unwrap())),
+            )
+        } else {
+            (isolated(uri, document), FileId(uri.into()))
+        };
+        let mut assets = Vec::new();
+        if let Some(path) = &path {
+            for asset in crossbreeze::assets::urls(&snapshot.css_values(&file)) {
+                if workspace
+                    .resolve_asset(path, &asset.value)
+                    .is_some_and(|target| !target.is_file())
+                {
+                    assets.push(json!({"source":"XCSS","code":"asset.not-found","severity":1,"message":format!("Cannot resolve asset '{}'.",asset.value),"range":range(&asset.range)}));
+                }
+            }
         }
-        return Vec::new();
+        queue.insert(
+            uri.into(),
+            AnalysisJob {
+                uri: uri.into(),
+                version: document.version,
+                generation,
+                snapshot,
+                file,
+                properties: properties && !typescript,
+                values: values && !typescript,
+                assets,
+            },
+        );
     }
-    let snapshot = workspace.snapshot();
-    let file = FileId(workspace::uri(path));
-    let mut result = diagnostics(&snapshot, &file, properties, values);
-    for asset in crossbreeze::assets::urls(&snapshot.css_values(&file)) {
-        if let Some(target) = workspace.resolve_asset(path, &asset.value)
-            && !target.is_file()
-        {
-            result.push(json!({"source":"XCSS","code":"asset.not-found","severity":1,"message":format!("Cannot resolve asset '{}'.",asset.value),"range":range(&asset.range)}));
+    jobs.1.notify_one();
+}
+
+fn semantic(
+    snapshot: &crossbreeze::ServiceSnapshot,
+    file: &FileId,
+    document: Option<&Document>,
+) -> Value {
+    let mut data = Vec::new();
+    let mut line = 0;
+    let mut character = 0;
+    let mut tokens = snapshot.semantic_tokens(&file);
+    for extra in crossbreeze::css::tokens(&snapshot.css_values(&file)) {
+        let function = xcss_language_service::TOKEN_TYPES
+            .iter()
+            .position(|kind| *kind == "cssFunction")
+            .unwrap();
+        tokens.retain(|old| {
+            !(old.token_type == function
+                && old.line == extra.line
+                && old.character == extra.character)
+        });
+        if !tokens.iter().any(|old| {
+            old.line == extra.line
+                && old.character < extra.character + extra.length
+                && extra.character < old.character + old.length
+        }) {
+            tokens.push(extra);
         }
     }
-    result
+    tokens.sort_by_key(|token| (token.line, token.character));
+    if let Some(document) = document {
+        for extra in crossbreeze::typescript::import_tokens(&document.text) {
+            if !tokens.iter().any(|token| {
+                token.line == extra.line
+                    && token.character < extra.character + extra.length
+                    && extra.character < token.character + token.length
+            }) {
+                tokens.push(extra);
+            }
+        }
+        tokens.sort_by_key(|token| (token.line, token.character));
+    }
+    for token in tokens {
+        data.extend([
+            token.line - line,
+            if token.line == line {
+                token.character - character
+            } else {
+                token.character
+            },
+            token.length,
+            token.token_type,
+            usize::from(token.declaration),
+        ]);
+        line = token.line;
+        character = token.character;
+    }
+    json!({"data":data})
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let (sender, receiver) = std::sync::mpsc::channel();
+    let jobs = std::sync::Arc::new((
+        std::sync::Mutex::new(std::collections::BTreeMap::<String, AnalysisJob>::new()),
+        std::sync::Condvar::new(),
+    ));
+    let worker_jobs = jobs.clone();
+    let worker_sender = sender.clone();
+    std::thread::spawn(move || {
+        loop {
+            let mut queue = worker_jobs.0.lock().unwrap();
+            while queue.is_empty() {
+                queue = worker_jobs.1.wait(queue).unwrap();
+            }
+            // Coalesce typing bursts while retaining only the latest snapshot per document.
+            let (guard, _) = worker_jobs
+                .1
+                .wait_timeout(queue, std::time::Duration::from_millis(150))
+                .unwrap();
+            queue = guard;
+            let Some((_, job)) = queue.pop_first() else {
+                continue;
+            };
+            drop(queue);
+            let started = std::time::Instant::now();
+            let warning = job.snapshot.typescript_project_warning();
+            let mut result = diagnostics(&job.snapshot, &job.file, job.properties, job.values);
+            result.extend(job.assets);
+            if std::env::var_os("CROSSBREEZE_TRACE").is_some() {
+                eprintln!(
+                    "diagnostics {} v{} {:?}",
+                    job.uri,
+                    job.version,
+                    started.elapsed()
+                );
+            }
+            let message = json!({"method":"crossbreeze/internalDiagnostics","params":{"uri":job.uri,"version":job.version,"generation":job.generation,"diagnostics":result,"warning":warning}});
+            if worker_sender
+                .send(Some(serde_json::to_vec(&message).unwrap()))
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
+    let (semantic_tx, semantic_rx) = std::sync::mpsc::channel::<(
+        Value,
+        String,
+        Option<i64>,
+        u64,
+        crossbreeze::ServiceSnapshot,
+        FileId,
+        Option<Document>,
+    )>();
+    let semantic_sender = sender.clone();
+    std::thread::spawn(move || {
+        while let Ok((id, uri, version, epoch, snapshot, file, document)) = semantic_rx.recv() {
+            let start = std::time::Instant::now();
+            let result = semantic(&snapshot, &file, document.as_ref());
+            if std::env::var_os("CROSSBREEZE_TRACE").is_some() {
+                eprintln!("semantic {} {:?}", uri, start.elapsed());
+            }
+            let message = json!({"method":"crossbreeze/internalSemantic","params":{"id":id,"uri":uri,"version":version,"generation":epoch,"result":result}});
+            if semantic_sender
+                .send(Some(serde_json::to_vec(&message).unwrap()))
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
+    let mut generation = 0u64;
+    let mut last_warning = String::new();
     let input_sender = sender.clone();
     let cancelled = std::sync::Arc::new(std::sync::Mutex::new(
         std::collections::HashSet::<String>::new(),
@@ -118,6 +292,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut css_values = true;
     let mut configuration = false;
     let mut next_configuration = 0u64;
+    let mut project_pending = std::collections::HashMap::<String, String>::new();
     let mut pending = std::collections::HashMap::<String, (Value, Option<i64>)>::new();
     while let Ok(Some(body)) = receiver.recv() {
         let mut message: Value = match serde_json::from_slice(&body) {
@@ -131,6 +306,26 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
         if message.get("method").is_none() {
+            if let Some(uri) = message["id"]
+                .as_str()
+                .and_then(|id| project_pending.remove(id))
+            {
+                if let Some(source) = workspace::path(&uri) {
+                    if let Some(config) = message["result"][0].as_str().and_then(workspace::path) {
+                        workspace.project_configs.insert(source, config);
+                    }
+                    generation += 1;
+                    schedule_diagnostics(
+                        &mut workspace,
+                        &documents,
+                        css_properties,
+                        css_values,
+                        generation,
+                        &jobs,
+                    );
+                }
+                continue;
+            }
             if let Some(id) = message["id"].as_str()
                 && let Some((mut request, version)) = pending.remove(id)
             {
@@ -163,6 +358,50 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         let method = message["method"].as_str().unwrap_or("");
         let params = &message["params"];
+        if method == "crossbreeze/internalSemantic" {
+            let id = &params["id"];
+            let uri = params["uri"].as_str().unwrap_or("");
+            let error = if cancelled.lock().unwrap().remove(&id.to_string()) {
+                Some((-32800, "Request cancelled"))
+            } else if documents.get(uri).map(|d| d.version) != params["version"].as_i64()
+                || params["generation"].as_u64() != Some(generation)
+            {
+                Some((-32801, "Document changed"))
+            } else {
+                None
+            };
+            send(
+                &mut output,
+                if let Some((code, message)) = error {
+                    json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
+                } else {
+                    json!({"jsonrpc":"2.0","id":id,"result":params["result"]})
+                },
+            )?;
+            continue;
+        }
+        if method == "crossbreeze/internalDiagnostics" {
+            let uri = params["uri"].as_str().unwrap_or("");
+            if params["generation"].as_u64() == Some(generation)
+                && documents
+                    .get(uri)
+                    .is_some_and(|d| Some(d.version) == params["version"].as_i64())
+            {
+                last_warning = params["warning"].as_str().unwrap_or("").into();
+                if let Some(warning) = params["warning"].as_str() {
+                    eprintln!("{warning}");
+                    send(
+                        &mut output,
+                        json!({"jsonrpc":"2.0","method":"window/logMessage","params":{"type":2,"message":warning}}),
+                    )?;
+                }
+                send(
+                    &mut output,
+                    json!({"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":uri,"version":params["version"],"diagnostics":params["diagnostics"]}}),
+                )?;
+            }
+            continue;
+        }
         let id = message.get("id");
         if let Some(id) = id
             && cancelled.lock().unwrap().remove(&id.to_string())
@@ -196,6 +435,63 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("exit before shutdown".into());
             }
             break;
+        }
+        if method == "textDocument/semanticTokens/full"
+            && let Some(id) = id
+        {
+            let uri = params["textDocument"]["uri"].as_str().unwrap_or("");
+            let path = workspace::path(uri);
+            let typescript = path.as_ref().is_some_and(|p| {
+                p.extension()
+                    .is_some_and(|e| ["ts", "tsx", "mts", "cts"].iter().any(|x| e == *x))
+            });
+            let analysis = if typescript {
+                workspace
+                    .typescript_snapshot(path.as_ref().unwrap())
+                    .map(|(snapshot, anchor)| {
+                        (
+                            snapshot,
+                            FileId(
+                                path.as_ref()
+                                    .unwrap()
+                                    .strip_prefix(anchor)
+                                    .unwrap()
+                                    .to_string_lossy()
+                                    .replace('\\', "/"),
+                            ),
+                        )
+                    })
+            } else if path.is_some() {
+                Some((
+                    workspace.snapshot(),
+                    FileId(workspace::uri(path.as_ref().unwrap())),
+                ))
+            } else {
+                documents
+                    .get(uri)
+                    .map(|d| (isolated(uri, d), FileId(uri.into())))
+            };
+            if let Some((snapshot, file)) = analysis {
+                semantic_tx.send((
+                    id.clone(),
+                    uri.into(),
+                    documents.get(uri).map(|d| d.version),
+                    generation,
+                    snapshot,
+                    file,
+                    if typescript {
+                        documents.get(uri).cloned()
+                    } else {
+                        None
+                    },
+                ))?;
+            } else {
+                send(
+                    &mut output,
+                    json!({"jsonrpc":"2.0","id":id,"error":{"code":-32803,"message":"No analysis project available"}}),
+                )?;
+            }
+            continue;
         }
         let result: Result<Value, String> = (|| {
             if shutdown {
@@ -242,12 +538,72 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     workspace.refresh();
                     let watch_sender = sender.clone();
-                    let mut native_watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-                        if let Ok(event) = event && !matches!(event.kind, notify::EventKind::Access(_)) {
-                            let changes: Vec<_> = event.paths.iter().filter_map(|p| url::Url::from_file_path(p).ok().map(|url| json!({"uri":url.to_string(),"type":2}))).collect();
-                            let _ = watch_sender.send(Some(serde_json::to_vec(&json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":changes}})).unwrap()));
+                    let (watch_tx, watch_rx) =
+                        std::sync::mpsc::channel::<Vec<std::path::PathBuf>>();
+                    std::thread::spawn(move || {
+                        while let Ok(paths) = watch_rx.recv() {
+                            let mut paths: std::collections::BTreeSet<_> =
+                                paths.into_iter().collect();
+                            let deadline =
+                                std::time::Instant::now() + std::time::Duration::from_millis(150);
+                            while let Ok(more) = watch_rx.recv_timeout(
+                                deadline.saturating_duration_since(std::time::Instant::now()),
+                            ) {
+                                paths.extend(more);
+                            }
+                            let changes: Vec<_> = paths
+                                .iter()
+                                .filter_map(|p| {
+                                    url::Url::from_file_path(p)
+                                        .ok()
+                                        .map(|url| json!({"uri":url.to_string(),"type":2}))
+                                })
+                                .collect();
+                            if watch_sender.send(Some(serde_json::to_vec(&json!({"method":"workspace/didChangeWatchedFiles","params":{"changes":changes}})).unwrap())).is_err() { break; }
                         }
-                    }).map_err(|e| e.to_string())?;
+                    });
+                    let excluded = workspace.excluded.clone();
+                    let mut native_watcher =
+                        notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+                            if let Ok(event) = event
+                                && !matches!(event.kind, notify::EventKind::Access(_))
+                            {
+                                let paths: Vec<_> = event
+                                    .paths
+                                    .into_iter()
+                                    .filter(|p| {
+                                        !excluded.iter().any(|root| p.starts_with(root))
+                                            && !p.components().any(|c| {
+                                                [
+                                                    ".git",
+                                                    ".idea",
+                                                    "target",
+                                                    "coverage",
+                                                    ".tmp",
+                                                    ".tanstack",
+                                                ]
+                                                .contains(&c.as_os_str().to_string_lossy().as_ref())
+                                            })
+                                    })
+                                    .filter(|p| {
+                                        p.is_dir()
+                                            || p.extension().is_some_and(|e| {
+                                                [
+                                                    "ts", "tsx", "mts", "cts", "js", "jsx", "json",
+                                                    "xcss", "png", "jpg", "svg", "webp", "woff",
+                                                    "woff2",
+                                                ]
+                                                .iter()
+                                                .any(|x| e == *x)
+                                            })
+                                    })
+                                    .collect();
+                                if !paths.is_empty() {
+                                    let _ = watch_tx.send(paths);
+                                }
+                            }
+                        })
+                        .map_err(|e| e.to_string())?;
                     for root in &workspace.roots {
                         native_watcher
                             .watch(root, notify::RecursiveMode::Recursive)
@@ -266,6 +622,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         json!({"capabilities":{"positionEncoding":"utf-16","textDocumentSync":2,"definitionProvider":true,"referencesProvider":true,"hoverProvider":true,"colorProvider":true,"completionProvider":{"triggerCharacters":[".","\"","'","<"]},"documentFormattingProvider":true,"semanticTokensProvider":{"legend":{"tokenTypes":xcss_language_service::TOKEN_TYPES,"tokenModifiers":["declaration"]},"full":true}},"serverInfo":{"name":"CrossBreeze","version":env!("CARGO_PKG_VERSION")}}),
                     )
                 }
+                "crossbreeze/status" => Ok(json!(format!(
+                    "Generation: {generation}\nProjects: {:?}\nLast warning: {}",
+                    workspace.project_configs,
+                    if last_warning.is_empty() {
+                        "none"
+                    } else {
+                        &last_warning
+                    }
+                ))),
                 "shutdown" => {
                     _watcher = None;
                     shutdown = true;
@@ -295,10 +660,26 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     if let Ok(aliases) = serde_json::from_value(settings["aliases"].clone()) {
                         workspace.aliases = aliases;
                     }
+                    workspace.refresh();
+                    generation += 1;
+                    schedule_diagnostics(
+                        &mut workspace,
+                        &documents,
+                        css_properties,
+                        css_values,
+                        generation,
+                        &jobs,
+                    );
                     Ok(Value::Null)
                 }
                 "workspace/didChangeWatchedFiles" => {
-                    workspace.refresh();
+                    if let Some(changes) = params["changes"].as_array() {
+                        for change in changes {
+                            if let Some(path) = change["uri"].as_str().and_then(workspace::path) {
+                                workspace.changed(&path);
+                            }
+                        }
+                    }
                     if let Some(watcher) = _watcher.as_mut() {
                         for root in workspace.asset_watch_roots() {
                             if watched_roots.insert(root.clone())
@@ -309,17 +690,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                     }
-                    for (uri, document) in documents.iter() {
-                        if let Some(path) = workspace::path(uri) {
-                            let diagnostics = project_diagnostics(
-                                &mut workspace,
-                                &path,
-                                css_properties,
-                                css_values,
-                            );
-                            send(&mut output, json!({"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":uri,"version":document.version,"diagnostics":diagnostics}})).map_err(|e| e.to_string())?;
-                        }
-                    }
+                    generation += 1;
+                    schedule_diagnostics(
+                        &mut workspace,
+                        &documents,
+                        css_properties,
+                        css_values,
+                        generation,
+                        &jobs,
+                    );
                     Ok(Value::Null)
                 }
                 "textDocument/didOpen" | "textDocument/didChange" | "textDocument/didClose" => {
@@ -371,20 +750,31 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     {
                         workspace.overlays.insert(path, document.text.clone());
                     }
-                    workspace.refresh();
-                    let diagnostics = if let Some(path) = workspace::path(uri) {
-                        project_diagnostics(&mut workspace, &path, css_properties, css_values)
-                    } else if let Some(document) = documents.get(uri) {
-                        diagnostics(
-                            &isolated(uri, document),
-                            &FileId(uri.into()),
-                            css_properties,
-                            css_values,
-                        )
-                    } else {
-                        vec![]
-                    };
-                    send(&mut output, json!({"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":uri,"version":documents.get(uri).map(|d| d.version),"diagnostics":if method.ends_with("didClose") {vec![]} else {diagnostics}}})).map_err(|e| e.to_string())?;
+                    if configuration
+                        && method.ends_with("didOpen")
+                        && workspace::path(uri).is_some_and(|p| {
+                            p.extension().is_some_and(|e| {
+                                ["ts", "tsx", "mts", "cts"].iter().any(|x| e == *x)
+                            })
+                        })
+                    {
+                        next_configuration += 1;
+                        let config_id = format!("crossbreeze.project.{next_configuration}");
+                        project_pending.insert(config_id.clone(), uri.into());
+                        send(&mut output,json!({"jsonrpc":"2.0","id":config_id,"method":"workspace/configuration","params":{"items":[{"scopeUri":uri,"section":"crossbreeze.typescriptProject"}]}})).map_err(|e|e.to_string())?;
+                    }
+                    generation += 1;
+                    schedule_diagnostics(
+                        &mut workspace,
+                        &documents,
+                        css_properties,
+                        css_values,
+                        generation,
+                        &jobs,
+                    );
+                    if method.ends_with("didClose") {
+                        send(&mut output, json!({"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":uri,"diagnostics":[]}})).map_err(|e|e.to_string())?;
+                    }
                     Ok(Value::Null)
                 }
                 _ => {
@@ -454,7 +844,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         "textDocument/documentColor" => Ok(json!(crossbreeze::css::colors(&snapshot.css_values(&file)))), 
                         "textDocument/hover" => Ok(snapshot.hover(&file,pos).map_or(Value::Null, |h| json!({"contents":{"kind":"plaintext","value":h.text},"range":range(&h.range)}))),
                         "textDocument/completion" => Ok(json!(snapshot.completion(&file,pos).iter().map(|c| json!({"label":c.label,"kind":if c.kind=="class" {7}else if c.kind=="variantGroup" {13}else{20},"textEdit":{"range":range(&c.range),"newText":c.new_text}})).collect::<Vec<_>>())),
-                        "textDocument/semanticTokens/full" => { let mut data=Vec::new(); let mut line=0; let mut character=0; let mut tokens=snapshot.semantic_tokens(&file); for extra in crossbreeze::css::tokens(&snapshot.css_values(&file)) { let function=xcss_language_service::TOKEN_TYPES.iter().position(|kind|*kind=="cssFunction").unwrap(); tokens.retain(|old| !(old.token_type==function && old.line==extra.line && old.character==extra.character)); if !tokens.iter().any(|old| old.line==extra.line && old.character<extra.character+extra.length && extra.character<old.character+old.length) {tokens.push(extra);} } tokens.sort_by_key(|token|(token.line,token.character)); if typescript && let Some(document)=documents.get(uri) { for extra in crossbreeze::typescript::import_tokens(&document.text) { if !tokens.iter().any(|token|token.line==extra.line && token.character<extra.character+extra.length && extra.character<token.character+token.length) {tokens.push(extra);} } tokens.sort_by_key(|token|(token.line,token.character)); } for token in tokens { data.extend([token.line-line,if token.line==line {token.character-character}else{token.character},token.length,token.token_type,usize::from(token.declaration)]); line=token.line; character=token.character; } Ok(json!({"data":data})) }
+                        "textDocument/semanticTokens/full" => Ok(semantic(&snapshot, &file, if typescript { documents.get(uri) } else { None })),
                         "textDocument/formatting" => {
                             let doc=documents.get(uri).ok_or("Document is not open")?;
                             let options=crossbreeze::formatting::options(&params["options"],&params["_formatSettings"])?;

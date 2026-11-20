@@ -16,6 +16,17 @@ pub struct Workspace {
     pub overlays: BTreeMap<PathBuf, String>,
     files: BTreeMap<PathBuf, String>,
     revision: u64,
+    cached_xcss: Option<(BTreeMap<PathBuf, String>, ServiceSnapshot)>,
+    xcss_service: LanguageService,
+    ts_projects: BTreeMap<PathBuf, ProjectCache>,
+    inventory: Option<BTreeMap<PathBuf, String>>,
+    pub project_configs: BTreeMap<PathBuf, PathBuf>,
+}
+#[derive(Default)]
+struct ProjectCache {
+    service: LanguageService,
+    inputs: BTreeMap<PathBuf, String>,
+    anchor: PathBuf,
 }
 
 pub fn path(uri: &str) -> Option<PathBuf> {
@@ -216,11 +227,71 @@ impl Workspace {
     }
     /// Build a project-relative TypeScript view; the engine supplies its own libs.
     pub fn typescript_snapshot(&mut self, source: &Path) -> Option<(ServiceSnapshot, PathBuf)> {
-        let config = source.parent()?.ancestors().find_map(|dir| {
-            let path = dir.join("tsconfig.json");
-            (path.is_file() || self.overlays.contains_key(&path)).then_some(path)
+        let config = self.project_configs.get(source).cloned().or_else(|| {
+            source.parent()?.ancestors().find_map(|dir| {
+                let path = dir.join("tsconfig.json");
+                (path.is_file() || self.overlays.contains_key(&path)).then_some(path)
+            })
         })?;
-        let mut inputs = BTreeMap::new();
+        fn owning_config(
+            config: PathBuf,
+            source: &Path,
+            seen: &mut BTreeSet<PathBuf>,
+        ) -> Option<PathBuf> {
+            if !seen.insert(canonical(&config)) {
+                return None;
+            }
+            let text = fs::read_to_string(&config).ok()?;
+            let data: serde_json::Value =
+                jsonc_parser::parse_to_serde_value(&text, &Default::default())
+                    .ok()
+                    .flatten()?;
+            if let Some(references) = data["references"].as_array() {
+                for reference in references {
+                    let mut target = config.parent()?.join(reference["path"].as_str()?);
+                    if target.is_dir() {
+                        target = target.join("tsconfig.json");
+                    }
+                    if let Some(found) = owning_config(target, source, seen) {
+                        return Some(found);
+                    }
+                }
+            }
+            if data["files"]
+                .as_array()
+                .is_some_and(|files| files.is_empty())
+            {
+                return None;
+            }
+            let directory = config.parent()?;
+            let relative = source
+                .strip_prefix(directory)
+                .ok()?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let includes = data["include"].as_array();
+            if includes.is_some_and(|items| {
+                !items.iter().filter_map(|v| v.as_str()).any(|pattern| {
+                    relative.starts_with(
+                        pattern
+                            .split('*')
+                            .next()
+                            .unwrap_or("")
+                            .trim_end_matches('/'),
+                    )
+                })
+            }) {
+                return None;
+            }
+            Some(config)
+        }
+        let config = self
+            .project_configs
+            .get(source)
+            .cloned()
+            .or_else(|| owning_config(config.clone(), source, &mut BTreeSet::new()))
+            .unwrap_or(config);
+        let mut inputs = self.inventory.clone().unwrap_or_default();
         let mut visited = BTreeSet::new();
         fn inventory(
             dir: &Path,
@@ -235,10 +306,8 @@ impl Workspace {
             };
             for entry in entries.flatten() {
                 let path = entry.path();
-                if [
-                    ".git", ".pnpm", "dist", "build", "target", "coverage", ".idea",
-                ]
-                .contains(&entry.file_name().to_string_lossy().as_ref())
+                if [".git", ".pnpm", "target", "coverage", ".idea"]
+                    .contains(&entry.file_name().to_string_lossy().as_ref())
                 {
                     continue;
                 }
@@ -256,11 +325,14 @@ impl Workspace {
                 }
             }
         }
-        for root in &self.roots {
-            inventory(root, &mut inputs, &mut visited);
-        }
-        for dir in config.parent()?.ancestors() {
-            inventory(&dir.join("node_modules"), &mut inputs, &mut visited);
+        if self.inventory.is_none() {
+            for root in &self.roots {
+                inventory(root, &mut inputs, &mut visited);
+            }
+            for dir in config.parent()?.ancestors() {
+                inventory(&dir.join("node_modules"), &mut inputs, &mut visited);
+            }
+            self.inventory = Some(inputs.clone());
         }
         inputs.extend(self.files.clone());
         inputs.extend(self.overlays.clone());
@@ -282,10 +354,42 @@ impl Workspace {
                 .ok()
                 .map(|p| FileId(p.to_string_lossy().replace('\\', "/")))
         };
-        let mut service = LanguageService::new();
-        service.set_typescript_project(Some(id(&config)?.0));
+        let config_id = id(&config)?.0;
+        if std::env::var_os("CROSSBREEZE_TRACE").is_some() {
+            eprintln!(
+                "project={} files={} anchor={}",
+                config_id,
+                inputs.len(),
+                anchor.display()
+            );
+        }
+        let mut cache = self.ts_projects.remove(&config).unwrap_or_default();
+        if cache.anchor != anchor {
+            cache = ProjectCache::default();
+        }
+        if cache.inputs == inputs && cache.anchor == anchor {
+            let snapshot = cache.service.snapshot();
+            self.ts_projects.insert(config, cache);
+            return Some((snapshot, anchor));
+        }
+        let service = &mut cache.service;
+        if cache.anchor != anchor {
+            service.set_typescript_project(Some(config_id));
+        }
         self.revision += 1;
+        self.revision += 1;
+        for path in cache.inputs.keys().filter(|p| !inputs.contains_key(*p)) {
+            let file = id(path)?;
+            if path.extension().is_some_and(|e| e == "xcss") {
+                service.remove_file(&file, self.revision).ok()?;
+            } else {
+                service.remove_typescript_file(&file, self.revision).ok()?;
+            }
+        }
         for (path, text) in &inputs {
+            if cache.inputs.get(path) == Some(text) {
+                continue;
+            }
             let Some(file) = id(path) else {
                 continue;
             };
@@ -313,9 +417,42 @@ impl Workspace {
                     .ok()?;
             }
         }
-        Some((service.snapshot(), anchor))
+        let snapshot = service.snapshot();
+        cache.inputs = inputs;
+        cache.anchor = anchor.clone();
+        self.ts_projects.insert(config, cache);
+        Some((snapshot, anchor))
+    }
+    pub fn changed(&mut self, path: &Path) {
+        let path = canonical(path);
+        if path.extension().is_some_and(|e| e == "xcss") {
+            match fs::read_to_string(&path) {
+                Ok(text) => {
+                    self.files.insert(path.clone(), text);
+                }
+                Err(_) => {
+                    self.files.remove(&path);
+                }
+            }
+        }
+        if let Some(inventory) = self.inventory.as_mut() {
+            match fs::read_to_string(&path) {
+                Ok(text) => {
+                    inventory.insert(path, text);
+                }
+                Err(_) => {
+                    inventory.remove(&path);
+                }
+            }
+        }
+        // Resolutions may change after a target is created/deleted or aliases change.
+        self.xcss_service = LanguageService::new();
+        self.cached_xcss = None;
     }
     pub fn refresh(&mut self) {
+        self.inventory = None;
+        self.xcss_service = LanguageService::new();
+        self.cached_xcss = None;
         let mut files = BTreeMap::new();
         for root in &self.roots {
             self.scan(root, &mut files);
@@ -430,9 +567,26 @@ impl Workspace {
         target(base.join(specifier))
     }
     pub fn snapshot(&mut self) -> ServiceSnapshot {
+        let mut current = self.files.clone();
+        current.extend(
+            self.overlays
+                .iter()
+                .filter(|(p, _)| p.extension().is_some_and(|e| e == "xcss"))
+                .map(|(p, t)| (p.clone(), t.clone())),
+        );
+        if let Some((previous, snapshot)) = &self.cached_xcss {
+            if previous == &current {
+                return snapshot.clone();
+            }
+        }
         self.revision += 1;
-        let mut service = LanguageService::new();
-        let mut pending: Vec<_> = self.files.keys().cloned().collect();
+        let mut service = std::mem::take(&mut self.xcss_service);
+        if let Some((previous, _)) = &self.cached_xcss {
+            for old in previous.keys().filter(|p| !current.contains_key(*p)) {
+                let _ = service.remove_file(&FileId(uri(old)), self.revision);
+            }
+        }
+        let mut pending: Vec<_> = current.keys().cloned().collect();
         let mut visited = BTreeSet::new();
         while let Some(path) = pending.pop() {
             if !visited.insert(path.clone()) {
@@ -448,6 +602,13 @@ impl Workspace {
                 continue;
             };
             let id = FileId(uri(&path));
+            if self
+                .cached_xcss
+                .as_ref()
+                .is_some_and(|(old, _)| old.get(&path) == Some(&text))
+            {
+                continue;
+            }
             let parsed = xcss_syntax::parse(std::sync::Arc::new(xcss_source::SourceFile::new(
                 id.clone(),
                 self.revision,
@@ -470,13 +631,102 @@ impl Workspace {
             }
             let _ = service.set_file(id, self.revision, text);
         }
-        service.snapshot()
+        let snapshot = service.snapshot();
+        self.xcss_service = service;
+        self.cached_xcss = Some((current, snapshot.clone()));
+        snapshot
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn referenced_project_loads_dist_declarations_and_tracks_overlays() {
+        let root = std::env::temp_dir().join(format!("crossbreeze-dist-{}", std::process::id()));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("node_modules/units/dist")).unwrap();
+        fs::write(
+            root.join("tsconfig.json"),
+            r#"{"files":[],"references":[{"path":"./tsconfig.app.json"}]}"#,
+        )
+        .unwrap();
+        fs::write(root.join("tsconfig.app.json"), r#"{"compilerOptions":{"module":"esnext","moduleResolution":"bundler","jsx":"preserve"},"include":["src"]}"#).unwrap();
+        fs::write(
+            root.join("node_modules/units/package.json"),
+            r#"{"name":"units","types":"dist/index.d.ts"}"#,
+        )
+        .unwrap();
+        fs::write(root.join("node_modules/units/dist/index.d.ts"), "export declare function deg(n:number): '23deg'; export declare function px(n:number): '23px';").unwrap();
+        fs::write(
+            root.join("src/theme.xcss"),
+            "@vars { @provided --width = 12px; } .button {}",
+        )
+        .unwrap();
+        let source = "import {cssVars,styles} from './theme.xcss'; import {deg,px} from 'units'; const el = <div xClass={styles.button} xVars={{[cssVars.width]:deg(23)}}/>;";
+        fs::write(root.join("src/app.tsx"), source).unwrap();
+        let root = canonical(&root);
+        let file = root.join("src/app.tsx");
+        let mut workspace = Workspace {
+            roots: vec![root.clone()],
+            ..Default::default()
+        };
+        workspace.refresh();
+        let (snapshot, anchor) = workspace.typescript_snapshot(&file).unwrap();
+        let id = FileId(
+            file.strip_prefix(&anchor)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/"),
+        );
+        assert!(snapshot.typescript_project_warning().is_none());
+        assert!(
+            snapshot
+                .diagnostics(&id)
+                .iter()
+                .any(|d| d.diagnostic.code == "XC-008")
+        );
+        let revision = snapshot.revision();
+        assert_eq!(
+            workspace.typescript_snapshot(&file).unwrap().0.revision(),
+            revision
+        );
+        workspace
+            .overlays
+            .insert(file.clone(), source.replace("deg(23)", "px(23)"));
+        assert!(
+            !workspace
+                .typescript_snapshot(&file)
+                .unwrap()
+                .0
+                .diagnostics(&id)
+                .iter()
+                .any(|d| d.diagnostic.code == "XC-008")
+        );
+        workspace.overlays.remove(&file);
+        assert!(
+            workspace
+                .typescript_snapshot(&file)
+                .unwrap()
+                .0
+                .diagnostics(&id)
+                .iter()
+                .any(|d| d.diagnostic.code == "XC-008")
+        );
+        // Deleted sources must be removed from the persistent project.
+        fs::remove_file(&file).unwrap();
+        workspace.changed(&file);
+        assert!(
+            !workspace
+                .typescript_snapshot(&root.join("src/other.tsx"))
+                .unwrap()
+                .0
+                .diagnostics(&id)
+                .iter()
+                .any(|d| d.diagnostic.code == "XC-008")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn public_assets_follow_configuration_overlays_creation_and_deletion() {
         let root = std::env::temp_dir().join(format!("crossbreeze-public-{}", std::process::id()));
